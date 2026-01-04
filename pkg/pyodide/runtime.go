@@ -31,6 +31,7 @@ type Runtime struct {
 	mu       sync.Mutex
 	cacheDir string
 	logger   *slog.Logger
+	waiter   *v8go.Function
 }
 
 func New() (*Runtime, error) {
@@ -302,7 +303,6 @@ func New() (*Runtime, error) {
 					const oldInstantiate = WebAssembly.instantiate;
 					WebAssembly.instantiate = (bytes, importObject) => {
 						const size = bytes.byteLength || (bytes instanceof WebAssembly.Module ? "Module" : "unknown");
-						console.log("WASM_INSTANTIATE: " + size);
 						try {
 							if (bytes instanceof WebAssembly.Module) {
 								const instance = new WebAssembly.Instance(bytes, importObject);
@@ -319,17 +319,12 @@ func New() (*Runtime, error) {
 					};
 					
 					if (!WebAssembly.instantiateStreaming) {
-						console.log("Polyfilling WebAssembly.instantiateStreaming");
 						WebAssembly.instantiateStreaming = async (resp, importObject) => {
-							console.log("WASM_STREAMING_START");
 							const r = await resp;
 							const buffer = await r.arrayBuffer();
-							console.log("WASM_INSTANTIATE_START: " + buffer.byteLength);
 							try {
 								const module = new WebAssembly.Module(buffer);
-								console.log("WASM_MODULE_CREATED");
 								const instance = new WebAssembly.Instance(module, importObject);
-								console.log("WASM_INSTANTIATE_DONE");
 								return { module, instance };
 							} catch (e) {
 								console.log("WASM_INSTANTIATE_ERROR: " + e + "\nSTACK: " + e.stack);
@@ -409,20 +404,17 @@ func New() (*Runtime, error) {
 				};
 
 				g.createFetchResponse = (hex) => {
-					console.log("DECODE_START: " + hex.length);
 					const len = hex.length / 2;
 					const buffer = new Uint8Array(len);
 					for (let i = 0; i < len; i++) {
-						if (i % 500000 === 0) console.log("DECODE_PROGRESS: " + i + "/" + len);
 						buffer[i] = (hexTab[hex.charCodeAt(i * 2)] << 4) | hexTab[hex.charCodeAt(i * 2 + 1)];
 					}
-					console.log("DECODE_DONE");
 					const ab = buffer.buffer;
 					return {
 						ok: true, status: 200, statusText: "OK",
 						url: "http://localhost/asset",
 						headers: new g.Headers({ 'content-type': 'application/octet-stream' }),
-						arrayBuffer: () => { console.log("FETCH_ARRAYBUFFER_CALLED"); return Promise.resolve(ab); },
+						arrayBuffer: () => { return Promise.resolve(ab); },
 						json: () => Promise.resolve(JSON.parse(new g.TextDecoder().decode(buffer))),
 						text: () => Promise.resolve(new g.TextDecoder().decode(buffer)),
 						clone() { return this; }
@@ -514,6 +506,9 @@ func New() (*Runtime, error) {
 				console.log("Environment polyfilled (Base)");
 			})();
 		`, "init.js")
+
+		waiterVal, _ := rt.context.RunScript(`(p, res, rej) => { p.then(res).catch(rej); }`, "await.js")
+		rt.waiter, _ = waiterVal.AsFunction()
 	})
 	wg.Wait()
 	return rt, initErr
@@ -556,6 +551,34 @@ func (rt *Runtime) runTask(name string, fn func() error) error {
 	})
 	wg.Wait()
 	return err
+}
+
+func (rt *Runtime) await(val *v8go.Value, onResolve func(*v8go.Value), onReject func(error)) {
+	prom, err := val.AsPromise()
+	if err != nil {
+		onResolve(val)
+		return
+	}
+
+	resolve := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		var res *v8go.Value
+		if len(info.Args()) > 0 {
+			res = info.Args()[0]
+		}
+		onResolve(res)
+		return nil
+	}).GetFunction(rt.context)
+
+	reject := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		var msg string
+		if len(info.Args()) > 0 {
+			msg = info.Args()[0].String()
+		}
+		onReject(errors.New(msg))
+		return nil
+	}).GetFunction(rt.context)
+
+	rt.waiter.Call(v8go.Undefined(rt.isolate), prom.Value, resolve.Value, reject.Value)
 }
 
 func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
@@ -670,31 +693,11 @@ func (rt *Runtime) LoadPyodide(jsSource, indexURL string) error {
 			return
 		}
 
-		prom, err := val.AsPromise()
-		if err != nil {
-			rt.logger.Debug("LoadPyodide task: result is not a promise, done")
+		rt.await(val, func(v *v8go.Value) {
 			errCh <- nil
-			return
-		}
-
-		rt.logger.Debug("LoadPyodide task: attaching promise callbacks")
-		resolve := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			rt.logger.Debug("LoadPyodide task: Go resolve callback called")
-			errCh <- nil
-			return nil
-		}).GetFunction(rt.context)
-
-		reject := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			msg := info.Args()[0].String()
-			rt.logger.Error("LoadPyodide task: Go reject callback called", "error", msg)
-			errCh <- errors.New(msg)
-			return nil
-		}).GetFunction(rt.context)
-
-		waiter, _ := rt.context.RunScript(`(p, res, rej) => { p.then(res).catch(rej); }`, "await.js")
-		f, _ := waiter.AsFunction()
-		f.Call(v8go.Undefined(rt.isolate), prom.Value, resolve.Value, reject.Value)
-		rt.logger.Debug("LoadPyodide task: yielding loop to wait for async work")
+		}, func(err error) {
+			errCh <- err
+		})
 	})
 
 	return <-errCh
@@ -728,29 +731,11 @@ func (rt *Runtime) LoadPackage(name string) error {
 			return
 		}
 
-		prom, err := val.AsPromise()
-		if err != nil {
+		rt.await(val, func(v *v8go.Value) {
 			errCh <- nil
-			return
-		}
-
-		resolve := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			rt.logger.Debug("LoadPackage: Go resolve callback called")
-			errCh <- nil
-			return nil
-		}).GetFunction(rt.context)
-
-		reject := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			msg := info.Args()[0].String()
-			rt.logger.Error("LoadPackage: Go reject callback called", "error", msg)
-			errCh <- errors.New(msg)
-			return nil
-		}).GetFunction(rt.context)
-
-		waiter, _ := rt.context.RunScript(`(p, res, rej) => { p.then(res).catch(rej); }`, "await.js")
-		f, _ := waiter.AsFunction()
-		f.Call(v8go.Undefined(rt.isolate), prom.Value, resolve.Value, reject.Value)
-		rt.logger.Debug("LoadPackage: yielding loop to wait for async work")
+		}, func(err error) {
+			errCh <- err
+		})
 	})
 
 	select {
@@ -788,31 +773,11 @@ func (rt *Runtime) Run(code string) (string, error) {
 			return
 		}
 
-		prom, err := val.AsPromise()
-		if err != nil {
-			rt.logger.Debug("Run task: result is not a promise, returning string value")
-			resCh <- result{res: val.String()}
-			return
-		}
-
-		rt.logger.Debug("Run task: attaching promise callbacks")
-		resolve := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			rt.logger.Debug("Run task: Go resolve callback called")
-			resCh <- result{res: info.Args()[0].String()}
-			return nil
-		}).GetFunction(rt.context)
-
-		reject := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			msg := info.Args()[0].String()
-			rt.logger.Error("Run task: Go reject callback called", "error", msg)
-			resCh <- result{err: errors.New(msg)}
-			return nil
-		}).GetFunction(rt.context)
-
-		waiter, _ := rt.context.RunScript(`(p, res, rej) => { p.then(res).catch(rej); }`, "await.js")
-		f, _ := waiter.AsFunction()
-		f.Call(v8go.Undefined(rt.isolate), prom.Value, resolve.Value, reject.Value)
-		rt.logger.Debug("Run task: yielding loop to wait for async work")
+		rt.await(val, func(v *v8go.Value) {
+			resCh <- result{res: v.String()}
+		}, func(err error) {
+			resCh <- result{err: err}
+		})
 	})
 
 	res := <-resCh
