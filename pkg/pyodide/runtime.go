@@ -29,15 +29,18 @@ type task struct {
 }
 
 type Runtime struct {
-	isolate  *v8go.Isolate
-	context  *v8go.Context
-	assets   map[string][]byte
-	tasks    chan task
-	done     chan struct{}
-	mu       sync.Mutex
-	cacheDir string
-	logger   *slog.Logger
-	waiter   *v8go.Function
+	isolate    *v8go.Isolate
+	context    *v8go.Context
+	assets     map[string][]byte
+	tasks      chan task
+	done       chan struct{}
+	mu         sync.Mutex
+	cacheDir   string
+	logger     *slog.Logger
+	waiter     *v8go.Function
+	loopWg     sync.WaitGroup
+	activeTask string
+	closed     bool
 }
 
 func New() (*Runtime, error) {
@@ -49,7 +52,10 @@ func New() (*Runtime, error) {
 		done:    make(chan struct{}),
 		logger:  slog.Default(),
 	}
+	rt.loopWg.Add(1)
 	go rt.loop()
+	rt.loopWg.Add(1)
+	go rt.watchdog()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -257,14 +263,21 @@ func New() (*Runtime, error) {
 }
 
 func (rt *Runtime) loop() {
+	defer rt.loopWg.Done()
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case t := <-rt.tasks:
+			rt.mu.Lock()
+			rt.activeTask = t.name
+			rt.mu.Unlock()
 			rt.logger.Debug("Runtime loop start", "task", t.name)
 			t.fn()
 			rt.logger.Debug("Runtime loop done", "task", t.name)
+			rt.mu.Lock()
+			rt.activeTask = ""
+			rt.mu.Unlock()
 			if rt.context != nil {
 				rt.context.PerformMicrotaskCheckpoint()
 			}
@@ -273,6 +286,25 @@ func (rt *Runtime) loop() {
 				rt.context.PerformMicrotaskCheckpoint()
 			}
 			// fmt.Printf("Tick\n")
+		case <-rt.done:
+			return
+		}
+	}
+}
+
+func (rt *Runtime) watchdog() {
+	defer rt.loopWg.Done()
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if n := len(rt.tasks); n > 0 {
+				rt.mu.Lock()
+				at := rt.activeTask
+				rt.mu.Unlock()
+				rt.logger.Info("Watchdog", "queue_len", n, "active_task", at)
+			}
 		case <-rt.done:
 			return
 		}
@@ -364,8 +396,11 @@ func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
 	if cacheDir != "" {
 		hash := sha256.Sum256([]byte(url))
 		cachePath := filepath.Join(cacheDir, hex.EncodeToString(hash[:]))
-		_ = os.MkdirAll(cacheDir, 0755)
-		_ = os.WriteFile(cachePath, data, 0644)
+		if err := os.MkdirAll(cacheDir, 0755); err != nil {
+			rt.logger.Warn("FetchAsset: failed to create cache dir", "dir", cacheDir, "error", err)
+		} else if err := os.WriteFile(cachePath, data, 0644); err != nil {
+			rt.logger.Warn("FetchAsset: failed to write cache file", "path", cachePath, "error", err)
+		}
 	}
 
 	rt.mu.Lock()
@@ -525,18 +560,20 @@ func (rt *Runtime) Run(code string) (string, error) {
 	})
 
 	res := <-resCh
+	rt.logger.Info("Run done.")
 	return res.res, res.err
 }
 
 func (rt *Runtime) Close() {
 	rt.mu.Lock()
-	if rt.done != nil {
-		close(rt.done)
-		rt.done = nil
+	if rt.closed {
+		rt.mu.Unlock()
+		return
 	}
+	rt.closed = true
 	rt.mu.Unlock()
-	// Give the loop a chance to exit before closing context
-	time.Sleep(50 * time.Millisecond)
+	close(rt.done)
+	rt.loopWg.Wait()
 	rt.context.Close()
 	rt.isolate.Dispose()
 }

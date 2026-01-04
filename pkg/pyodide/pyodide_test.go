@@ -9,21 +9,9 @@ const pyodideVersion = "0.25.1"
 const pyodideBaseURL = "https://cdn.jsdelivr.net/pyodide/v" + pyodideVersion + "/full/"
 
 func TestPyodideBasic(t *testing.T) {
-	testTmpDir := "../../scratch"
-	os.MkdirAll(testTmpDir, 0755)
-
-	rt, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rt.Close()
-
-	rt.SetCacheDir(testTmpDir)
-
-	err = rt.LoadPyodide(pyodideBaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	rt, done := setup(t)
+	defer done()
 
 	t.Run("Python Math", func(t *testing.T) {
 		res, err := rt.Run("1 + 1")
@@ -45,23 +33,11 @@ func TestPyodideBasic(t *testing.T) {
 }
 
 func TestPyodideNumpy(t *testing.T) {
-	testTmpDir := "../../scratch"
-	os.MkdirAll(testTmpDir, 0755)
+	t.Parallel()
+	rt, done := setup(t)
+	defer done()
 
-	rt, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rt.Close()
-
-	rt.SetCacheDir(testTmpDir)
-
-	err = rt.LoadPyodide(pyodideBaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPackage("numpy")
+	err := rt.LoadPackage("numpy")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,23 +54,11 @@ func TestPyodideNumpy(t *testing.T) {
 }
 
 func TestPyodideSix(t *testing.T) {
-	testTmpDir := "../../scratch"
-	os.MkdirAll(testTmpDir, 0755)
+	t.Parallel()
+	rt, done := setup(t)
+	defer done()
 
-	rt, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rt.Close()
-
-	rt.SetCacheDir(testTmpDir)
-
-	err = rt.LoadPyodide(pyodideBaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPackage("six")
+	err := rt.LoadPackage("six")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,23 +73,11 @@ func TestPyodideSix(t *testing.T) {
 }
 
 func TestPyodidePandas(t *testing.T) {
-	testTmpDir := "../../scratch"
-	os.MkdirAll(testTmpDir, 0755)
+	t.Parallel()
+	rt, done := setup(t)
+	defer done()
 
-	rt, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rt.Close()
-
-	rt.SetCacheDir(testTmpDir)
-
-	err = rt.LoadPyodide(pyodideBaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPackage("pandas")
+	err := rt.LoadPackage("pandas")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,23 +99,11 @@ str(df['a'].sum())
 }
 
 func TestPyodideDuckDB(t *testing.T) {
-	testTmpDir := "../../scratch"
-	os.MkdirAll(testTmpDir, 0755)
+	t.Parallel()
+	rt, done := setup(t)
+	defer done()
 
-	rt, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rt.Close()
-
-	rt.SetCacheDir(testTmpDir)
-
-	err = rt.LoadPyodide(pyodideBaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPackage(`https://duckdb.github.io/duckdb-pyodide/wheels/duckdb-1.2.0-cp311-cp311-emscripten_3_1_46_wasm32.whl`)
+	err := rt.LoadPackage(`https://duckdb.github.io/duckdb-pyodide/wheels/duckdb-1.2.0-cp311-cp311-emscripten_3_1_46_wasm32.whl`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,4 +122,24 @@ str(res[0])
 			t.Errorf("expected 42, got %s", res)
 		}
 	})
+}
+
+func setup(t *testing.T) (*Runtime, func()) {
+	t.Helper()
+	testTmpDir := "../../scratch"
+	os.MkdirAll(testTmpDir, 0755)
+
+	rt, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rt.SetCacheDir(testTmpDir)
+
+	err = rt.LoadPyodide(pyodideBaseURL)
+	if err != nil {
+		rt.Close()
+		t.Fatal(err)
+	}
+	return rt, func() { rt.Close() }
 }
