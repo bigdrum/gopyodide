@@ -95,7 +95,12 @@ func New() (*Runtime, error) {
 
 		// Fetch
 		fetchFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			url := info.Args()[0].String()
+			args := info.Args()
+			if len(args) < 1 {
+				return nil
+			}
+			url := args[0].String()
+			fmt.Printf("JS_FETCH_URL: %s\n", url)
 			resolver, _ := v8go.NewPromiseResolver(rt.context)
 			go func() {
 				fmt.Printf("JS_FETCH_START: %s\n", url)
@@ -118,6 +123,92 @@ func New() (*Runtime, error) {
 			}()
 			return resolver.GetPromise().Value
 		})
+		// setTimeout
+		setTimeoutFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+			args := info.Args()
+			if len(args) < 1 {
+				return nil
+			}
+			fnVal := args[0]
+			ms := int32(0)
+			if len(args) >= 2 {
+				ms = args[1].Int32()
+			}
+			f, _ := fnVal.AsFunction()
+			time.AfterFunc(time.Duration(ms)*time.Millisecond, func() {
+				rt.queueTask("setTimeout", func() {
+					rt.mu.Lock()
+					closed := rt.done == nil
+					rt.mu.Unlock()
+					if !closed {
+						_, err := f.Call(v8go.Undefined(iso))
+						if err != nil {
+							fmt.Printf("SET_TIMEOUT_ERROR: %v\n", err)
+						}
+					}
+				})
+			})
+			return nil
+		})
+		global.Set("setTimeout", setTimeoutFn.GetFunction(rt.context))
+
+		// setInterval
+		setIntervalFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+			args := info.Args()
+			if len(args) < 1 {
+				return nil
+			}
+			fnVal := args[0]
+			ms := int32(0)
+			if len(args) >= 2 {
+				ms = args[1].Int32()
+			}
+			f, _ := fnVal.AsFunction()
+			ticker := time.NewTicker(time.Duration(ms) * time.Millisecond)
+			go func() {
+				for {
+					select {
+					case <-ticker.C:
+						rt.queueTask("setInterval", func() {
+							rt.mu.Lock()
+							closed := rt.done == nil
+							rt.mu.Unlock()
+							if !closed {
+								_, err := f.Call(v8go.Undefined(iso))
+								if err != nil {
+									fmt.Printf("SET_INTERVAL_ERROR: %v\n", err)
+								}
+							}
+						})
+					case <-rt.done:
+						ticker.Stop()
+						return
+					}
+				}
+			}()
+			return nil
+		})
+		global.Set("setInterval", setIntervalFn.GetFunction(rt.context))
+
+		// QueueTask
+		queueTaskFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+			fnVal := info.Args()[0]
+			f, _ := fnVal.AsFunction()
+			rt.queueTask("js_task", func() {
+				rt.mu.Lock()
+				closed := rt.done == nil
+				rt.mu.Unlock()
+				if !closed {
+					_, err := f.Call(v8go.Undefined(iso))
+					if err != nil {
+						fmt.Printf("JS_TASK_ERROR: %v\n", err)
+					}
+				}
+			})
+			return nil
+		})
+		global.Set("__queueTask", queueTaskFn.GetFunction(rt.context))
+
 		fetch := fetchFn.GetFunction(rt.context)
 		global.Set("fetch", fetch)
 
@@ -188,53 +279,116 @@ func New() (*Runtime, error) {
 					getRandomValues: (arr) => {
 						for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
 						return arr;
+					},
+					subtle: {
+						digest: (algo, data) => Promise.resolve(new Uint8Array(0).buffer)
 					}
 				};
 
 				g.performance = { now: () => Date.now() };
+				g.requestAnimationFrame = (fn) => setTimeout(fn, 16);
+				g.cancelAnimationFrame = (id) => {};
 				
-				g.setTimeout = (fn, ms) => {
-					console.log("SET_TIMEOUT: " + ms);
-					if (ms === 0) {
-						Promise.resolve().then(fn);
-					} else {
-						fn();
-					}
-					return 0;
-				};
-				g.setInterval = (fn, ms) => {
-					console.log("SET_INTERVAL: " + ms);
-					return 0;
-				};
 				g.clearTimeout = (id) => {};
 				g.clearInterval = (id) => {};
 				
-				if (typeof WebAssembly !== 'undefined' && !WebAssembly.instantiateStreaming) {
-					console.log("Polyfilling WebAssembly.instantiateStreaming");
-					WebAssembly.instantiateStreaming = async (resp, importObject) => {
-						console.log("WASM_STREAMING_START");
-						const r = await resp;
-						const buffer = await r.arrayBuffer();
-						console.log("WASM_INSTANTIATE_START: " + buffer.byteLength);
+				if (typeof WebAssembly !== 'undefined') {
+					const oldInstantiate = WebAssembly.instantiate;
+					WebAssembly.instantiate = (bytes, importObject) => {
+						const size = bytes.byteLength || (bytes instanceof WebAssembly.Module ? "Module" : "unknown");
+						console.log("WASM_INSTANTIATE: " + size);
 						try {
-							const module = new WebAssembly.Module(buffer);
-							console.log("WASM_MODULE_CREATED");
-							const instance = new WebAssembly.Instance(module, importObject);
-							console.log("WASM_INSTANTIATE_DONE");
-							return { module, instance };
+							if (bytes instanceof WebAssembly.Module) {
+								const instance = new WebAssembly.Instance(bytes, importObject);
+								return Promise.resolve(instance);
+							} else {
+								const module = new WebAssembly.Module(bytes);
+								const instance = new WebAssembly.Instance(module, importObject);
+								return Promise.resolve({ module, instance });
+							}
 						} catch (e) {
-							console.log("WASM_INSTANTIATE_ERROR: " + e + "\nSTACK: " + e.stack);
-							throw e;
+							console.log("WASM_INSTANTIATE_FAIL: " + e);
+							return Promise.reject(e);
 						}
 					};
+					
+					if (!WebAssembly.instantiateStreaming) {
+						console.log("Polyfilling WebAssembly.instantiateStreaming");
+						WebAssembly.instantiateStreaming = async (resp, importObject) => {
+							console.log("WASM_STREAMING_START");
+							const r = await resp;
+							const buffer = await r.arrayBuffer();
+							console.log("WASM_INSTANTIATE_START: " + buffer.byteLength);
+							try {
+								const module = new WebAssembly.Module(buffer);
+								console.log("WASM_MODULE_CREATED");
+								const instance = new WebAssembly.Instance(module, importObject);
+								console.log("WASM_INSTANTIATE_DONE");
+								return { module, instance };
+							} catch (e) {
+								console.log("WASM_INSTANTIATE_ERROR: " + e + "\nSTACK: " + e.stack);
+								throw e;
+							}
+						};
+					}
 				}
+
+				g.Blob = class {
+					constructor(parts, options) {
+						this.parts = parts;
+						this.options = options;
+						this.size = parts.reduce((acc, p) => acc + (p.byteLength || p.size || 0), 0);
+					}
+					async arrayBuffer() {
+						const res = new Uint8Array(this.size);
+						let offset = 0;
+						for (const p of this.parts) {
+							const b = p instanceof Uint8Array ? p : new Uint8Array(await p.arrayBuffer());
+							res.set(b, offset);
+							offset += b.length;
+						}
+						return res.buffer;
+					}
+				};
 
 				g.MessageChannel = class {
 					constructor() {
-						this.port1 = { onmessage: null, postMessage: (msg) => { if (this.port2.onmessage) this.port2.onmessage({data: msg}); } };
-						this.port2 = { onmessage: null, postMessage: (msg) => { if (this.port1.onmessage) this.port1.onmessage({data: msg}); } };
+						const createPort = () => {
+							const port = {
+								onmessage: null,
+								_listeners: [],
+								addEventListener(ev, fn) {
+									if (ev === 'message') this._listeners.push(fn);
+								},
+								removeEventListener(ev, fn) {
+									if (ev === 'message') this._listeners = this._listeners.filter(l => l !== fn);
+								},
+								postMessage: (msg) => {
+									console.log("PORT_POSTMESSAGE");
+									__queueTask(() => {
+										const other = port._other;
+										if (other) {
+											const ev = { data: msg, target: other };
+											if (other.onmessage) other.onmessage(ev);
+											other._listeners.forEach(l => l(ev));
+										}
+									});
+								},
+								start() {}
+							};
+							return port;
+						};
+						this.port1 = createPort();
+						this.port2 = createPort();
+						this.port1._other = this.port2;
+						this.port2._other = this.port1;
 					}
 				};
+
+				g.addEventListener = (ev, fn) => {
+					console.log("GLOBAL_ADD_EVENT_LISTENER: " + ev);
+				};
+				g.removeEventListener = (ev, fn) => {};
 
 				const hexTab = new Uint8Array(256);
 				for (let i = 0; i < 16; i++) {
@@ -242,20 +396,30 @@ func New() (*Runtime, error) {
 					hexTab["0123456789ABCDEF".charCodeAt(i)] = i;
 				}
 
+				g.Headers = class {
+					constructor(init) { this._map = new Map(init ? Object.entries(init) : []); }
+					get(n) { return this._map.get(n.toLowerCase()) || null; }
+					has(n) { return this._map.has(n.toLowerCase()); }
+				};
+
 				g.createFetchResponse = (hex) => {
 					console.log("DECODE_START: " + hex.length);
 					const len = hex.length / 2;
 					const buffer = new Uint8Array(len);
 					for (let i = 0; i < len; i++) {
+						if (i % 500000 === 0) console.log("DECODE_PROGRESS: " + i + "/" + len);
 						buffer[i] = (hexTab[hex.charCodeAt(i * 2)] << 4) | hexTab[hex.charCodeAt(i * 2 + 1)];
 					}
 					console.log("DECODE_DONE");
 					const ab = buffer.buffer;
 					return {
-						ok: true, status: 200,
-						arrayBuffer: () => Promise.resolve(ab),
+						ok: true, status: 200, statusText: "OK",
+						url: "http://localhost/asset",
+						headers: new g.Headers({ 'content-type': 'application/octet-stream' }),
+						arrayBuffer: () => { console.log("FETCH_ARRAYBUFFER_CALLED"); return Promise.resolve(ab); },
 						json: () => Promise.resolve(JSON.parse(new g.TextDecoder().decode(buffer))),
-						text: () => Promise.resolve(new g.TextDecoder().decode(buffer))
+						text: () => Promise.resolve(new g.TextDecoder().decode(buffer)),
+						clone() { return this; }
 					};
 				};
 
@@ -336,6 +500,8 @@ func New() (*Runtime, error) {
 						cookie: ""
 					};
 					g.document = createLogger("document", document);
+					g.URL.createObjectURL = (obj) => "blob:mock";
+					g.URL.revokeObjectURL = (url) => {};
 					console.log("Document polyfilled (deferred)");
 				};
 
@@ -363,6 +529,7 @@ func (rt *Runtime) loop() {
 			if rt.context != nil {
 				rt.context.PerformMicrotaskCheckpoint()
 			}
+			// fmt.Printf("Tick\n")
 		case <-rt.done:
 			return
 		}
@@ -521,6 +688,66 @@ func (rt *Runtime) LoadPyodide(jsSource, indexURL string) error {
 	return <-errCh
 }
 
+func (rt *Runtime) LoadPackage(name string) error {
+	fmt.Printf("LoadPackage: starting (%s)\n", name)
+
+	errCh := make(chan error, 1)
+
+	rt.queueTask("LoadPackage", func() {
+		script := fmt.Sprintf(`
+			(() => {
+				if (!globalThis.pyodide) {
+					throw new Error("Pyodide not initialized");
+				}
+				console.log("LoadPackage: running loadPackage script");
+				return globalThis.pyodide.loadPackage(%q).then(() => {
+					console.log("LoadPackage: done");
+					return "OK";
+				}).catch(e => {
+					console.log("LoadPackage: promise rejected internally: " + e + "\nSTACK: " + e.stack);
+					throw e;
+				});
+			})()
+		`, name)
+
+		val, err := rt.context.RunScript(script, "load_package.js")
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		prom, err := val.AsPromise()
+		if err != nil {
+			errCh <- nil
+			return
+		}
+
+		resolve := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+			fmt.Println("LoadPackage: Go resolve callback called")
+			errCh <- nil
+			return nil
+		}).GetFunction(rt.context)
+
+		reject := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+			fmt.Println("LoadPackage: Go reject callback called", info.Args()[0].String())
+			errCh <- errors.New(info.Args()[0].String())
+			return nil
+		}).GetFunction(rt.context)
+
+		waiter, _ := rt.context.RunScript(`(p, res, rej) => { p.then(res).catch(rej); }`, "await.js")
+		f, _ := waiter.AsFunction()
+		f.Call(v8go.Undefined(rt.isolate), prom.Value, resolve.Value, reject.Value)
+		fmt.Println("LoadPackage: yielding loop to wait for async work")
+	})
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(120 * time.Second):
+		return errors.New("LoadPackage timeout after 120s")
+	}
+}
+
 func (rt *Runtime) Run(code string) (string, error) {
 	fmt.Printf("Run: starting (code len=%d)\n", len(code))
 
@@ -580,7 +807,14 @@ func (rt *Runtime) Run(code string) (string, error) {
 }
 
 func (rt *Runtime) Close() {
-	close(rt.done)
+	rt.mu.Lock()
+	if rt.done != nil {
+		close(rt.done)
+		rt.done = nil
+	}
+	rt.mu.Unlock()
+	// Give the loop a chance to exit before closing context
+	time.Sleep(50 * time.Millisecond)
 	rt.context.Close()
 	rt.isolate.Dispose()
 }
