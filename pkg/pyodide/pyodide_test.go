@@ -122,3 +122,46 @@ func TestPyodideSix(t *testing.T) {
 		t.Logf("six version: %s", res)
 	})
 }
+
+func TestPyodidePandas(t *testing.T) {
+	testDataDir := "../../testdata"
+	os.MkdirAll(testDataDir, 0755)
+
+	rt, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+
+	rt.SetCacheDir(testDataDir)
+
+	jsData, err := rt.FetchAsset(pyodideBaseURL + "pyodide.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = rt.LoadPyodide(string(jsData), pyodideBaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = rt.LoadPackage("pandas")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("Pandas DataFrame", func(t *testing.T) {
+		res, err := rt.Run(`
+import pandas as pd
+import numpy as np
+df = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
+str(df['a'].sum())
+`)
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if res != "3" {
+			t.Errorf("expected 3, got %s", res)
+		}
+	})
+}

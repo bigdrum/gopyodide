@@ -3,7 +3,7 @@ package pyodide
 import (
 	"testing"
 
-	"rogchap.com/v8go"
+	"github.com/tommie/v8go"
 )
 
 func TestV8Features(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"rogchap.com/v8go"
+	"github.com/tommie/v8go"
 )
 
 func TestV8Raw(t *testing.T) {

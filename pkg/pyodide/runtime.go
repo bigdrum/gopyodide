@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"rogchap.com/v8go"
+	"github.com/tommie/v8go"
 )
 
 type task struct {
