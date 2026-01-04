@@ -3,6 +3,7 @@ package pyodide
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -201,6 +202,28 @@ func New() (*Runtime, error) {
 			return nil
 		})
 		global.Set("setInterval", setIntervalFn.GetFunction(rt.context))
+
+		// btoa
+		btoaFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+			args := info.Args()
+			if len(args) < 1 {
+				val, _ := v8go.NewValue(iso, "TypeError: 1 argument required, but only 0 present.")
+				return iso.ThrowException(val)
+			}
+			str := args[0].String()
+			data := make([]byte, 0, len(str))
+			for _, r := range str {
+				if r > 255 {
+					val, _ := v8go.NewValue(iso, "InvalidCharacterError: The string to be encoded contains characters outside of the Latin1 range.")
+					return iso.ThrowException(val)
+				}
+				data = append(data, byte(r))
+			}
+			encoded := base64.StdEncoding.EncodeToString(data)
+			val, _ := v8go.NewValue(iso, encoded)
+			return val
+		})
+		global.Set("btoa", btoaFn.GetFunction(rt.context))
 
 		// QueueTask
 		queueTaskFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {

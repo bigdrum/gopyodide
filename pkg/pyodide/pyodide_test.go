@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const pyodideVersion = "0.22.1"
+const pyodideVersion = "0.25.1"
 const pyodideBaseURL = "https://cdn.jsdelivr.net/pyodide/v" + pyodideVersion + "/full/"
 
 func TestPyodideBasic(t *testing.T) {
@@ -162,6 +162,52 @@ str(df['a'].sum())
 		}
 		if res != "3" {
 			t.Errorf("expected 3, got %s", res)
+		}
+	})
+}
+
+func TestPyodideDuckDB(t *testing.T) {
+	testDataDir := "../../testdata"
+	os.MkdirAll(testDataDir, 0755)
+
+	rt, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+
+	rt.SetCacheDir(testDataDir)
+
+	const version = "0.25.1"
+	const baseURL = "https://cdn.jsdelivr.net/pyodide/v" + version + "/full/"
+
+	jsData, err := rt.FetchAsset(baseURL + "pyodide.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = rt.LoadPyodide(string(jsData), baseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = rt.LoadPackage(`https://duckdb.github.io/duckdb-pyodide/wheels/duckdb-1.2.0-cp311-cp311-emscripten_3_1_46_wasm32.whl`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("DuckDB Query", func(t *testing.T) {
+		res, err := rt.Run(`
+import duckdb
+con = duckdb.connect()
+res = con.execute("SELECT 42").fetchone()
+str(res[0])
+`)
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if res != "42" {
+			t.Errorf("expected 42, got %s", res)
 		}
 	})
 }
