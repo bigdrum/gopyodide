@@ -328,10 +328,8 @@ func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
 	rt.mu.Lock()
 	if d, ok := rt.assets[url]; ok {
 		rt.mu.Unlock()
-		rt.logger.Debug("FetchAsset hit", "url", url)
 		return d, nil
 	}
-	rt.logger.Debug("FetchAsset miss", "url", url)
 	cacheDir := rt.cacheDir
 	rt.mu.Unlock()
 
@@ -342,7 +340,7 @@ func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
 			rt.mu.Lock()
 			rt.assets[url] = d
 			rt.mu.Unlock()
-			rt.logger.Debug("FetchAsset cache hit", "url", url)
+			rt.logger.Info("FetchAsset local cache hit", "url", url)
 			return d, nil
 		}
 	}

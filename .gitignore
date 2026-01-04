@@ -22,10 +22,4 @@ go.work
 .idea/
 
 # Project specific
-testdata/[0-9a-f][0-9a-f]*
-testdata/pyodide.js
-testdata/pyodide.asm.js
-testdata/pyodide.asm.wasm
-testdata/pyodide-lock.json
-testdata/python_stdlib.zip
-testdata/repodata.json
+scratch/

@@ -9,8 +9,8 @@ const pyodideVersion = "0.25.1"
 const pyodideBaseURL = "https://cdn.jsdelivr.net/pyodide/v" + pyodideVersion + "/full/"
 
 func TestPyodideBasic(t *testing.T) {
-	testDataDir := "../../testdata"
-	os.MkdirAll(testDataDir, 0755)
+	testTmpDir := "../../scratch"
+	os.MkdirAll(testTmpDir, 0755)
 
 	rt, err := New()
 	if err != nil {
@@ -18,7 +18,7 @@ func TestPyodideBasic(t *testing.T) {
 	}
 	defer rt.Close()
 
-	rt.SetCacheDir(testDataDir)
+	rt.SetCacheDir(testTmpDir)
 
 	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
@@ -45,8 +45,8 @@ func TestPyodideBasic(t *testing.T) {
 }
 
 func TestPyodideNumpy(t *testing.T) {
-	testDataDir := "../../testdata"
-	os.MkdirAll(testDataDir, 0755)
+	testTmpDir := "../../scratch"
+	os.MkdirAll(testTmpDir, 0755)
 
 	rt, err := New()
 	if err != nil {
@@ -54,7 +54,7 @@ func TestPyodideNumpy(t *testing.T) {
 	}
 	defer rt.Close()
 
-	rt.SetCacheDir(testDataDir)
+	rt.SetCacheDir(testTmpDir)
 
 	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
@@ -78,8 +78,8 @@ func TestPyodideNumpy(t *testing.T) {
 }
 
 func TestPyodideSix(t *testing.T) {
-	testDataDir := "../../testdata"
-	os.MkdirAll(testDataDir, 0755)
+	testTmpDir := "../../scratch"
+	os.MkdirAll(testTmpDir, 0755)
 
 	rt, err := New()
 	if err != nil {
@@ -87,7 +87,7 @@ func TestPyodideSix(t *testing.T) {
 	}
 	defer rt.Close()
 
-	rt.SetCacheDir(testDataDir)
+	rt.SetCacheDir(testTmpDir)
 
 	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
@@ -109,8 +109,8 @@ func TestPyodideSix(t *testing.T) {
 }
 
 func TestPyodidePandas(t *testing.T) {
-	testDataDir := "../../testdata"
-	os.MkdirAll(testDataDir, 0755)
+	testTmpDir := "../../scratch"
+	os.MkdirAll(testTmpDir, 0755)
 
 	rt, err := New()
 	if err != nil {
@@ -118,7 +118,7 @@ func TestPyodidePandas(t *testing.T) {
 	}
 	defer rt.Close()
 
-	rt.SetCacheDir(testDataDir)
+	rt.SetCacheDir(testTmpDir)
 
 	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
@@ -147,8 +147,8 @@ str(df['a'].sum())
 }
 
 func TestPyodideDuckDB(t *testing.T) {
-	testDataDir := "../../testdata"
-	os.MkdirAll(testDataDir, 0755)
+	testTmpDir := "../../scratch"
+	os.MkdirAll(testTmpDir, 0755)
 
 	rt, err := New()
 	if err != nil {
@@ -156,7 +156,7 @@ func TestPyodideDuckDB(t *testing.T) {
 	}
 	defer rt.Close()
 
-	rt.SetCacheDir(testDataDir)
+	rt.SetCacheDir(testTmpDir)
 
 	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
