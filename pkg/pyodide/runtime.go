@@ -395,14 +395,18 @@ func (rt *Runtime) SetAsset(url string, data []byte) {
 	rt.mu.Unlock()
 }
 
-func (rt *Runtime) LoadPyodide(jsSource, indexURL string) error {
-	rt.logger.Info("LoadPyodide: starting", "jsSource_len", len(jsSource), "indexURL", indexURL)
+func (rt *Runtime) LoadPyodide(indexURL string) error {
+	rt.logger.Info("LoadPyodide: starting", "indexURL", indexURL)
 
+	jsSource, err := rt.FetchAsset(indexURL + "pyodide.js")
+	if err != nil {
+		return err
+	}
 	errCh := make(chan error, 1)
 
 	rt.queueTask("LoadPyodide", func() {
 		rt.logger.Debug("LoadPyodide task: running jsSource")
-		_, err := rt.context.RunScript(jsSource, "pyodide.js")
+		_, err := rt.context.RunScript(string(jsSource), "pyodide.js")
 		if err != nil {
 			errCh <- fmt.Errorf("jsSource failed: %w", err)
 			return

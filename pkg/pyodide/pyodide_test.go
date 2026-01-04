@@ -20,12 +20,7 @@ func TestPyodideBasic(t *testing.T) {
 
 	rt.SetCacheDir(testDataDir)
 
-	jsData, err := rt.FetchAsset(pyodideBaseURL + "pyodide.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPyodide(string(jsData), pyodideBaseURL)
+	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,12 +56,7 @@ func TestPyodideNumpy(t *testing.T) {
 
 	rt.SetCacheDir(testDataDir)
 
-	jsData, err := rt.FetchAsset(pyodideBaseURL + "pyodide.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPyodide(string(jsData), pyodideBaseURL)
+	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,12 +89,7 @@ func TestPyodideSix(t *testing.T) {
 
 	rt.SetCacheDir(testDataDir)
 
-	jsData, err := rt.FetchAsset(pyodideBaseURL + "pyodide.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPyodide(string(jsData), pyodideBaseURL)
+	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,12 +120,7 @@ func TestPyodidePandas(t *testing.T) {
 
 	rt.SetCacheDir(testDataDir)
 
-	jsData, err := rt.FetchAsset(pyodideBaseURL + "pyodide.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPyodide(string(jsData), pyodideBaseURL)
+	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,15 +158,7 @@ func TestPyodideDuckDB(t *testing.T) {
 
 	rt.SetCacheDir(testDataDir)
 
-	const version = "0.25.1"
-	const baseURL = "https://cdn.jsdelivr.net/pyodide/v" + version + "/full/"
-
-	jsData, err := rt.FetchAsset(baseURL + "pyodide.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = rt.LoadPyodide(string(jsData), baseURL)
+	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
