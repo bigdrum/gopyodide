@@ -1,11 +1,13 @@
 package pyodide
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,6 +30,7 @@ type Runtime struct {
 	done     chan struct{}
 	mu       sync.Mutex
 	cacheDir string
+	logger   *slog.Logger
 }
 
 func New() (*Runtime, error) {
@@ -37,6 +40,7 @@ func New() (*Runtime, error) {
 		assets:  make(map[string][]byte),
 		tasks:   make(chan task, 100),
 		done:    make(chan struct{}),
+		logger:  slog.Default(),
 	}
 	go rt.loop()
 
@@ -51,15 +55,17 @@ func New() (*Runtime, error) {
 
 		// Console
 		logFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			args := info.Args()
-			s := ""
-			for i, a := range args {
-				if i > 0 {
-					s += " "
+			if rt.logger.Enabled(context.Background(), slog.LevelInfo) {
+				args := info.Args()
+				s := ""
+				for i, a := range args {
+					if i > 0 {
+						s += " "
+					}
+					s += a.String()
 				}
-				s += a.String()
+				rt.logger.Info("JS_LOG", "message", s)
 			}
-			fmt.Printf("JS_LOG: %s\n", s)
 			return nil
 		})
 		consoleObjTempl := v8go.NewObjectTemplate(iso)
@@ -74,17 +80,17 @@ func New() (*Runtime, error) {
 		// importScripts
 		importScriptsFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 			url := info.Args()[0].String()
-			fmt.Printf("JS_IMPORT_START: %s\n", url)
+			rt.logger.Debug("JS_IMPORT_START", "url", url)
 			data, err := rt.FetchAsset(url)
 			if err != nil {
-				fmt.Printf("JS_IMPORT_ERROR: %s - %v\n", url, err)
+				rt.logger.Error("JS_IMPORT_ERROR", "url", url, "error", err)
 				val, _ := v8go.NewValue(iso, err.Error())
 				return iso.ThrowException(val)
 			}
-			fmt.Printf("JS_IMPORT_DONE: %s (%d bytes)\n", url, len(data))
+			rt.logger.Debug("JS_IMPORT_DONE", "url", url, "bytes", len(data))
 			_, err = rt.context.RunScript(string(data), url)
 			if err != nil {
-				fmt.Printf("JS_IMPORT_EXEC_ERROR: %s - %v\n", url, err)
+				rt.logger.Error("JS_IMPORT_EXEC_ERROR", "url", url, "error", err)
 				val, _ := v8go.NewValue(iso, err.Error())
 				return iso.ThrowException(val)
 			}
@@ -100,18 +106,18 @@ func New() (*Runtime, error) {
 				return nil
 			}
 			url := args[0].String()
-			fmt.Printf("JS_FETCH_URL: %s\n", url)
+			rt.logger.Debug("JS_FETCH_URL", "url", url)
 			resolver, _ := v8go.NewPromiseResolver(rt.context)
 			go func() {
-				fmt.Printf("JS_FETCH_START: %s\n", url)
+				rt.logger.Debug("JS_FETCH_START", "url", url)
 				data, err := rt.FetchAsset(url)
 				rt.queueTask("fetch_resolve", func() {
 					if err != nil {
-						fmt.Printf("JS_FETCH_ERROR: %s - %v\n", url, err)
+						rt.logger.Error("JS_FETCH_ERROR", "url", url, "error", err)
 						val, _ := v8go.NewValue(iso, err.Error())
 						resolver.Reject(val)
 					} else {
-						fmt.Printf("JS_FETCH_DONE: %s (%d bytes)\n", url, len(data))
+						rt.logger.Debug("JS_FETCH_DONE", "url", url, "bytes", len(data))
 						hexData := hex.EncodeToString(data)
 						arg, _ := v8go.NewValue(iso, hexData)
 						fn, _ := rt.context.Global().Get("createFetchResponse")
@@ -143,7 +149,7 @@ func New() (*Runtime, error) {
 					if !closed {
 						_, err := f.Call(v8go.Undefined(iso))
 						if err != nil {
-							fmt.Printf("SET_TIMEOUT_ERROR: %v\n", err)
+							rt.logger.Error("SET_TIMEOUT_ERROR", "error", err)
 						}
 					}
 				})
@@ -176,7 +182,7 @@ func New() (*Runtime, error) {
 							if !closed {
 								_, err := f.Call(v8go.Undefined(iso))
 								if err != nil {
-									fmt.Printf("SET_INTERVAL_ERROR: %v\n", err)
+									rt.logger.Error("SET_INTERVAL_ERROR", "error", err)
 								}
 							}
 						})
@@ -201,7 +207,7 @@ func New() (*Runtime, error) {
 				if !closed {
 					_, err := f.Call(v8go.Undefined(iso))
 					if err != nil {
-						fmt.Printf("JS_TASK_ERROR: %v\n", err)
+						rt.logger.Error("JS_TASK_ERROR", "error", err)
 					}
 				}
 			})
@@ -519,9 +525,9 @@ func (rt *Runtime) loop() {
 	for {
 		select {
 		case t := <-rt.tasks:
-			fmt.Printf("Runtime loop start: %s\n", t.name)
+			rt.logger.Debug("Runtime loop start", "task", t.name)
 			t.fn()
-			fmt.Printf("Runtime loop done: %s\n", t.name)
+			rt.logger.Debug("Runtime loop done", "task", t.name)
 			if rt.context != nil {
 				rt.context.PerformMicrotaskCheckpoint()
 			}
@@ -553,14 +559,14 @@ func (rt *Runtime) runTask(name string, fn func() error) error {
 }
 
 func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
-	fmt.Println("FetchAsset: " + url)
+	rt.logger.Debug("FetchAsset", "url", url)
 	rt.mu.Lock()
 	if d, ok := rt.assets[url]; ok {
 		rt.mu.Unlock()
-		fmt.Println("FetchAsset hit: " + url)
+		rt.logger.Debug("FetchAsset hit", "url", url)
 		return d, nil
 	}
-	fmt.Println("FetchAsset miss: " + url)
+	rt.logger.Debug("FetchAsset miss", "url", url)
 	cacheDir := rt.cacheDir
 	rt.mu.Unlock()
 
@@ -571,15 +577,15 @@ func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
 			rt.mu.Lock()
 			rt.assets[url] = d
 			rt.mu.Unlock()
-			fmt.Println("FetchAsset cache hit: " + url)
+			rt.logger.Debug("FetchAsset cache hit", "url", url)
 			return d, nil
 		}
 	}
 
-	fmt.Println("FetchAsset http: " + url)
+	rt.logger.Info("FetchAsset http", "url", url)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(url)
-	fmt.Println("FetchAsset http done: " + url)
+	rt.logger.Info("FetchAsset http done", "url", url)
 	if err != nil {
 		return nil, err
 	}
@@ -612,6 +618,12 @@ func (rt *Runtime) SetCacheDir(path string) {
 	rt.mu.Unlock()
 }
 
+func (rt *Runtime) SetLogger(l *slog.Logger) {
+	rt.mu.Lock()
+	rt.logger = l
+	rt.mu.Unlock()
+}
+
 func (rt *Runtime) SetAsset(url string, data []byte) {
 	rt.mu.Lock()
 	rt.assets[url] = data
@@ -619,19 +631,19 @@ func (rt *Runtime) SetAsset(url string, data []byte) {
 }
 
 func (rt *Runtime) LoadPyodide(jsSource, indexURL string) error {
-	fmt.Printf("LoadPyodide: starting (jsSource len=%d, indexURL=%s)\n", len(jsSource), indexURL)
+	rt.logger.Info("LoadPyodide: starting", "jsSource_len", len(jsSource), "indexURL", indexURL)
 
 	errCh := make(chan error, 1)
 
 	rt.queueTask("LoadPyodide", func() {
-		fmt.Println("LoadPyodide task: running jsSource")
+		rt.logger.Debug("LoadPyodide task: running jsSource")
 		_, err := rt.context.RunScript(jsSource, "pyodide.js")
 		if err != nil {
 			errCh <- fmt.Errorf("jsSource failed: %w", err)
 			return
 		}
 
-		fmt.Println("LoadPyodide task: running __initDocument")
+		rt.logger.Debug("LoadPyodide task: running __initDocument")
 		_, err = rt.context.RunScript("__initDocument();", "init_doc.js")
 		if err != nil {
 			errCh <- fmt.Errorf("__initDocument failed: %w", err)
@@ -651,7 +663,7 @@ func (rt *Runtime) LoadPyodide(jsSource, indexURL string) error {
 				});
 		`, indexURL)
 
-		fmt.Println("LoadPyodide task: running loadPyodide script")
+		rt.logger.Debug("LoadPyodide task: running loadPyodide script")
 		val, err := rt.context.RunScript(script, "load.js")
 		if err != nil {
 			errCh <- fmt.Errorf("loadPyodide script failed: %w", err)
@@ -660,21 +672,21 @@ func (rt *Runtime) LoadPyodide(jsSource, indexURL string) error {
 
 		prom, err := val.AsPromise()
 		if err != nil {
-			fmt.Println("LoadPyodide task: result is not a promise, done")
+			rt.logger.Debug("LoadPyodide task: result is not a promise, done")
 			errCh <- nil
 			return
 		}
 
-		fmt.Println("LoadPyodide task: attaching promise callbacks")
+		rt.logger.Debug("LoadPyodide task: attaching promise callbacks")
 		resolve := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			fmt.Println("LoadPyodide task: Go resolve callback called")
+			rt.logger.Debug("LoadPyodide task: Go resolve callback called")
 			errCh <- nil
 			return nil
 		}).GetFunction(rt.context)
 
 		reject := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 			msg := info.Args()[0].String()
-			fmt.Printf("LoadPyodide task: Go reject callback called: %s\n", msg)
+			rt.logger.Error("LoadPyodide task: Go reject callback called", "error", msg)
 			errCh <- errors.New(msg)
 			return nil
 		}).GetFunction(rt.context)
@@ -682,14 +694,14 @@ func (rt *Runtime) LoadPyodide(jsSource, indexURL string) error {
 		waiter, _ := rt.context.RunScript(`(p, res, rej) => { p.then(res).catch(rej); }`, "await.js")
 		f, _ := waiter.AsFunction()
 		f.Call(v8go.Undefined(rt.isolate), prom.Value, resolve.Value, reject.Value)
-		fmt.Println("LoadPyodide task: yielding loop to wait for async work")
+		rt.logger.Debug("LoadPyodide task: yielding loop to wait for async work")
 	})
 
 	return <-errCh
 }
 
 func (rt *Runtime) LoadPackage(name string) error {
-	fmt.Printf("LoadPackage: starting (%s)\n", name)
+	rt.logger.Info("LoadPackage: starting", "package", name)
 
 	errCh := make(chan error, 1)
 
@@ -723,21 +735,22 @@ func (rt *Runtime) LoadPackage(name string) error {
 		}
 
 		resolve := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			fmt.Println("LoadPackage: Go resolve callback called")
+			rt.logger.Debug("LoadPackage: Go resolve callback called")
 			errCh <- nil
 			return nil
 		}).GetFunction(rt.context)
 
 		reject := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			fmt.Println("LoadPackage: Go reject callback called", info.Args()[0].String())
-			errCh <- errors.New(info.Args()[0].String())
+			msg := info.Args()[0].String()
+			rt.logger.Error("LoadPackage: Go reject callback called", "error", msg)
+			errCh <- errors.New(msg)
 			return nil
 		}).GetFunction(rt.context)
 
 		waiter, _ := rt.context.RunScript(`(p, res, rej) => { p.then(res).catch(rej); }`, "await.js")
 		f, _ := waiter.AsFunction()
 		f.Call(v8go.Undefined(rt.isolate), prom.Value, resolve.Value, reject.Value)
-		fmt.Println("LoadPackage: yielding loop to wait for async work")
+		rt.logger.Debug("LoadPackage: yielding loop to wait for async work")
 	})
 
 	select {
@@ -749,7 +762,7 @@ func (rt *Runtime) LoadPackage(name string) error {
 }
 
 func (rt *Runtime) Run(code string) (string, error) {
-	fmt.Printf("Run: starting (code len=%d)\n", len(code))
+	rt.logger.Info("Run: starting", "code_len", len(code))
 
 	type result struct {
 		res string
@@ -758,7 +771,7 @@ func (rt *Runtime) Run(code string) (string, error) {
 	resCh := make(chan result, 1)
 
 	rt.queueTask("Run", func() {
-		fmt.Println("Run task: running script")
+		rt.logger.Debug("Run task: running script")
 		script := fmt.Sprintf(`
 			(async () => {
 				if (!globalThis.pyodide) {
@@ -770,28 +783,28 @@ func (rt *Runtime) Run(code string) (string, error) {
 
 		val, err := rt.context.RunScript(script, "run.js")
 		if err != nil {
-			fmt.Printf("Run task: script run failed: %v\n", err)
+			rt.logger.Error("Run task: script run failed", "error", err)
 			resCh <- result{err: err}
 			return
 		}
 
 		prom, err := val.AsPromise()
 		if err != nil {
-			fmt.Println("Run task: result is not a promise, returning string value")
+			rt.logger.Debug("Run task: result is not a promise, returning string value")
 			resCh <- result{res: val.String()}
 			return
 		}
 
-		fmt.Println("Run task: attaching promise callbacks")
+		rt.logger.Debug("Run task: attaching promise callbacks")
 		resolve := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			fmt.Println("Run task: Go resolve callback called")
+			rt.logger.Debug("Run task: Go resolve callback called")
 			resCh <- result{res: info.Args()[0].String()}
 			return nil
 		}).GetFunction(rt.context)
 
 		reject := v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 			msg := info.Args()[0].String()
-			fmt.Printf("Run task: Go reject callback called: %s\n", msg)
+			rt.logger.Error("Run task: Go reject callback called", "error", msg)
 			resCh <- result{err: errors.New(msg)}
 			return nil
 		}).GetFunction(rt.context)
@@ -799,7 +812,7 @@ func (rt *Runtime) Run(code string) (string, error) {
 		waiter, _ := rt.context.RunScript(`(p, res, rej) => { p.then(res).catch(rej); }`, "await.js")
 		f, _ := waiter.AsFunction()
 		f.Call(v8go.Undefined(rt.isolate), prom.Value, resolve.Value, reject.Value)
-		fmt.Println("Run task: yielding loop to wait for async work")
+		rt.logger.Debug("Run task: yielding loop to wait for async work")
 	})
 
 	res := <-resCh
