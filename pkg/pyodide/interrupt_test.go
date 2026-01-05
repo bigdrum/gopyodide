@@ -25,6 +25,7 @@ func TestPyodideInterrupt(t *testing.T) {
 	// We catch KeyboardInterrupt to verify it was thrown.
 	code := `
 import time
+res = 'RUNNING'
 try:
     start = time.time()
     while True:
@@ -32,8 +33,6 @@ try:
         if time.time() - start > 10:
              res = "TIMEOUT"
              break
-    if 'res' not in locals():
-        res = "FINISHED" # Should not happen if loop runs
 except KeyboardInterrupt:
     res = "INTERRUPTED"
 res

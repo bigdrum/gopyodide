@@ -303,7 +303,7 @@ func (rt *Runtime) LoadPyodide(indexURL string) error {
 				buf, free, _ := v.SharedArrayBufferGetContents()
 				rt.interruptBuf = buf
 				rt.interruptFree = free
-				rt.logger.Info("LoadPyodide: interrupt buffer initialized", "len", len(buf))
+				rt.logger.Debug("LoadPyodide: interrupt buffer initialized", "len", len(buf))
 			} else {
 				rt.logger.Warn("LoadPyodide: returned value is not SharedArrayBuffer")
 			}
@@ -311,7 +311,6 @@ func (rt *Runtime) LoadPyodide(indexURL string) error {
 		}, func(err error) {
 			errCh <- err
 		})
-
 	})
 
 	return <-errCh
@@ -363,26 +362,6 @@ func (rt *Runtime) LoadPackage(name string) error {
 func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 	rt.logger.Info("Run: starting", "code_len", len(code))
 
-	if rt.interruptBuf != nil && len(rt.interruptBuf) > 0 {
-		rt.interruptBuf[0] = 0
-	}
-
-	ctxDone := make(chan struct{})
-	defer close(ctxDone)
-	if rt.interruptBuf != nil {
-		go func() {
-			select {
-			case <-ctx.Done():
-				// Trigger execution interrupt
-				if len(rt.interruptBuf) > 0 {
-					rt.interruptBuf[0] = 2
-					rt.logger.Info("Run: context cancelled, sent interrupt")
-				}
-			case <-ctxDone:
-			}
-		}()
-	}
-
 	type result struct {
 		res string
 		err error
@@ -391,6 +370,11 @@ func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 
 	rt.queueTask("Run", func() {
 		rt.logger.Debug("Run task: running script")
+		if len(rt.interruptBuf) > 0 {
+			rt.mu.Lock()
+			rt.interruptBuf[0] = 0
+			rt.mu.Unlock()
+		}
 		script := fmt.Sprintf(`
 			(async () => {
 				if (!globalThis.pyodide) {
@@ -419,6 +403,16 @@ func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 		rt.logger.Info("Run done.")
 		return res.res, res.err
 	case <-ctx.Done():
+		// Trigger execution interrupt
+		if len(rt.interruptBuf) > 0 {
+			rt.mu.Lock()
+			rt.interruptBuf[0] = 2
+			rt.mu.Unlock()
+			rt.logger.Info("Run: context cancelled, sent interrupt")
+		} else {
+			rt.logger.Warn("Run: context cancelled, but interrupt buffer is not initialized")
+		}
+
 		// If context is cancelled, we still wait for the result from resCh because we triggered interrupt.
 		// Pyodide should throw KeyboardInterrupt and return.
 		// However, we shouldn't block forever if something goes wrong.
