@@ -55,7 +55,8 @@
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 		platform: "MacIntel",
 		languages: ["en-US", "en"],
-		onLine: true
+		onLine: true,
+		maxTouchPoints: 0
 	});
 
 	// Pretending to be a Web Worker for newer Pyodide versions
@@ -71,6 +72,7 @@
 	g.window = g;
 	g.top = g;
 	g.parent = g;
+	g.crossOriginIsolated = true;
 
 	// Oversimplified crypto implementation
 	g.crypto = {
@@ -92,7 +94,6 @@
 	if (typeof WebAssembly !== 'undefined') {
 		const oldInstantiate = WebAssembly.instantiate;
 		WebAssembly.instantiate = (bytes, importObject) => {
-			const size = bytes.byteLength || (bytes instanceof WebAssembly.Module ? "Module" : "unknown");
 			try {
 				if (bytes instanceof WebAssembly.Module) {
 					const instance = new WebAssembly.Instance(bytes, importObject);
@@ -103,7 +104,7 @@
 					return Promise.resolve({ module, instance });
 				}
 			} catch (e) {
-				console.log("WASM_INSTANTIATE_FAIL: " + e);
+				console.log("WASM_INSTANTIATE_FAIL: " + e + "\nSTACK: " + e.stack);
 				return Promise.reject(e);
 			}
 		};
@@ -122,6 +123,27 @@
 				}
 			};
 		}
+		if (!WebAssembly.compileStreaming) {
+			WebAssembly.compileStreaming = async (resp) => {
+				const r = await resp;
+				const buffer = await r.arrayBuffer();
+				try {
+					return new WebAssembly.Module(buffer);
+				} catch (e) {
+					console.log("WASM_COMPILE_ERROR: " + e + "\nSTACK: " + e.stack);
+					throw e;
+				}
+			};
+		}
+		const oldCompile = WebAssembly.compile;
+		WebAssembly.compile = async (bytes) => {
+			try {
+				return new WebAssembly.Module(bytes);
+			} catch (e) {
+				console.log("WASM_COMPILE_FAIL: " + e + "\nSTACK: " + e.stack);
+				throw e;
+			}
+		};
 	}
 
 	// Simplified Blob polyfill
@@ -187,10 +209,23 @@
 		}
 	};
 
+	const listeners = new Map();
 	g.addEventListener = (ev, fn) => {
-		console.debug("GLOBAL_ADD_EVENT_LISTENER (unimplemented): " + ev);
+		if (!listeners.has(ev)) listeners.set(ev, []);
+		listeners.get(ev).push(fn);
 	};
-	g.removeEventListener = (ev, fn) => { };
+	g.removeEventListener = (ev, fn) => {
+		if (!listeners.has(ev)) return;
+		listeners.set(ev, listeners.get(ev).filter(l => l !== fn));
+	};
+	g.postMessage = (msg) => {
+		__queueTask(() => {
+			const ev = { data: msg, target: g };
+			if (g.onmessage) g.onmessage(ev);
+			const callbacks = listeners.get('message');
+			if (callbacks) callbacks.forEach(cb => cb(ev));
+		});
+	};
 
 	g.__createSAB = (size) => new SharedArrayBuffer(size);
 
