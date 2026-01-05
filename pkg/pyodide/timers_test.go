@@ -1,4 +1,4 @@
-package pyodide
+package pyodide_test
 
 import (
 	"testing"
@@ -13,15 +13,15 @@ func TestSetTimeout(t *testing.T) {
 	defer done()
 
 	ch := make(chan bool)
-	err := rt.context.Global().Set("go_callback", v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	err := rt.V8Context().Global().Set("go_callback", v8go.NewFunctionTemplate(rt.V8Isolate(), func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		ch <- true
 		return nil
-	}).GetFunction(rt.context))
+	}).GetFunction(rt.V8Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = rt.context.RunScript("setTimeout(go_callback, 10)", "test.js")
+	_, err = rt.V8Context().RunScript("setTimeout(go_callback, 10)", "test.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,15 +40,15 @@ func TestClearTimeout(t *testing.T) {
 	defer done()
 
 	ch := make(chan bool)
-	err := rt.context.Global().Set("go_callback", v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	err := rt.V8Context().Global().Set("go_callback", v8go.NewFunctionTemplate(rt.V8Isolate(), func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		ch <- true
 		return nil
-	}).GetFunction(rt.context))
+	}).GetFunction(rt.V8Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = rt.context.RunScript("const timerId = setTimeout(go_callback, 100); clearTimeout(timerId);", "test.js")
+	_, err = rt.V8Context().RunScript("const timerId = setTimeout(go_callback, 100); clearTimeout(timerId);", "test.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,15 +67,15 @@ func TestSetInterval(t *testing.T) {
 	defer done()
 
 	ch := make(chan bool)
-	err := rt.context.Global().Set("go_callback", v8go.NewFunctionTemplate(rt.isolate, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+	err := rt.V8Context().Global().Set("go_callback", v8go.NewFunctionTemplate(rt.V8Isolate(), func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		ch <- true
 		return nil
-	}).GetFunction(rt.context))
+	}).GetFunction(rt.V8Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = rt.context.RunScript("const intervalId = setInterval(go_callback, 100); setTimeout(() => clearInterval(intervalId), 250);", "test.js")
+	_, err = rt.V8Context().RunScript("const intervalId = setInterval(go_callback, 100); setTimeout(() => clearInterval(intervalId), 250);", "test.js")
 	if err != nil {
 		t.Fatal(err)
 	}

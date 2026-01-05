@@ -1,4 +1,4 @@
-package pyodide
+package pyodide_test
 
 import (
 	"context"

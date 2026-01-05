@@ -1,25 +1,30 @@
-package pyodide
+package pyodide_test
 
 import (
 	"log/slog"
 	"os"
 	"testing"
+
+	"github.com/bigdrum/gopyodide/pkg/pyodide"
 )
 
-func setup(t *testing.T) (*Runtime, func()) {
+const pyodideVersion = "0.25.1"
+const pyodideBaseURL = "https://cdn.jsdelivr.net/pyodide/v" + pyodideVersion + "/full/"
+
+func setup(t *testing.T) (*pyodide.Runtime, func()) {
 	t.Helper()
 	testTmpDir := "../../scratch"
 	os.MkdirAll(testTmpDir, 0755)
 
-	rt, err := New()
+	rt, err := pyodide.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt.logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	rt.SetLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		// To enable debug logging, uncomment the following line:
 		// Level: slog.LevelDebug,
 		Level: slog.LevelInfo,
-	}))
+	})))
 	rt.SetCacheDir(testTmpDir)
 	err = rt.Start()
 	if err != nil {

@@ -1,12 +1,9 @@
-package pyodide
+package pyodide_test
 
 import (
 	"context"
 	"testing"
 )
-
-const pyodideVersion = "0.25.1"
-const pyodideBaseURL = "https://cdn.jsdelivr.net/pyodide/v" + pyodideVersion + "/full/"
 
 func TestPyodideBasic(t *testing.T) {
 	t.Parallel()

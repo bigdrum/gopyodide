@@ -48,6 +48,10 @@ type Runtime struct {
 	interruptFree func()
 }
 
+func (rt *Runtime) V8Isolate() *v8go.Isolate {
+	return rt.isolate
+}
+
 func New() (*Runtime, error) {
 	iso := v8go.NewIsolate()
 	rt := &Runtime{
@@ -83,6 +87,10 @@ func (rt *Runtime) Start() error {
 	})
 	wg.Wait()
 	return initErr
+}
+
+func (rt *Runtime) V8Context() *v8go.Context {
+	return rt.context
 }
 
 func (rt *Runtime) loop() {
@@ -136,18 +144,6 @@ func (rt *Runtime) watchdog() {
 
 func (rt *Runtime) queueTask(name string, fn func()) {
 	rt.tasks <- task{name: name, fn: fn}
-}
-
-func (rt *Runtime) runTask(name string, fn func() error) error {
-	var err error
-	var wg sync.WaitGroup
-	wg.Add(1)
-	rt.queueTask(name, func() {
-		defer wg.Done()
-		err = fn()
-	})
-	wg.Wait()
-	return err
 }
 
 func (rt *Runtime) await(val *v8go.Value, onResolve func(*v8go.Value), onReject func(error)) {

@@ -1,10 +1,12 @@
-package pyodide
+package pyodide_test
 
 import (
 	"testing"
 
 	"github.com/tommie/v8go"
 )
+
+// This file contains tests to learn/verify V8 features.
 
 func TestV8Features(t *testing.T) {
 	iso := v8go.NewIsolate()
