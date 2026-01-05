@@ -141,3 +141,8 @@ trigger a Python `KeyboardInterrupt` in the running script.
 
 - **CGO Enabled**: This library requires CGO to be enabled because it depends on
   `v8go`.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
+for details.
