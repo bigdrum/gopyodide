@@ -2,7 +2,6 @@ package pyodide_test
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,21 +38,19 @@ func TestPyodideMountHostFS(t *testing.T) {
 	defer done()
 
 	// Create a temp file on host
-	tmpFile, err := os.CreateTemp("", "pyodide-host-*.txt")
+	tmpDir, err := os.MkdirTemp("", "pyodide-ro-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer os.RemoveAll(tmpDir)
+
+	tmpFile := filepath.Join(tmpDir, "test.txt")
 	content := "Hello from Host!"
-	if _, err := tmpFile.Write([]byte(content)); err != nil {
+	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
-	tmpFile.Close()
 
-	hostPath := filepath.Dir(tmpFile.Name())
-	fileName := filepath.Base(tmpFile.Name())
-
-	err = rt.MountHostDir(hostPath, "/mnt", false)
+	err = rt.MountHostDir(tmpDir, "/mnt", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,13 +58,13 @@ func TestPyodideMountHostFS(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	script := fmt.Sprintf(`
+	script := `
 import os
-file_path = "/mnt/%s"
+file_path = "/mnt/test.txt"
 with open(file_path, "r") as f:
     data = f.read()
 data
-`, fileName)
+`
 
 	res, err := rt.Run(ctx, script)
 	if err != nil {
