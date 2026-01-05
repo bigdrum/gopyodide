@@ -1,9 +1,7 @@
 package pyodide
 
 import (
-	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -39,8 +37,9 @@ type Runtime struct {
 	logger     *slog.Logger
 	waiter     *v8go.Function
 	loopWg     sync.WaitGroup
-	activeTask string
-	closed     bool
+	wg         sync.WaitGroup
+	activeTask  string
+	closed      bool
 }
 
 func New() (*Runtime, error) {
@@ -64,194 +63,7 @@ func New() (*Runtime, error) {
 		defer wg.Done()
 
 		rt.context = v8go.NewContext(iso)
-		global := rt.context.Global()
-
-		// Console
-		logFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			if rt.logger.Enabled(context.Background(), slog.LevelInfo) {
-				args := info.Args()
-				s := ""
-				for i, a := range args {
-					if i > 0 {
-						s += " "
-					}
-					s += a.String()
-				}
-				rt.logger.Info("JS_LOG", "message", s)
-			}
-			return nil
-		})
-		consoleObjTempl := v8go.NewObjectTemplate(iso)
-		consoleObjTempl.Set("log", logFn)
-		consoleObjTempl.Set("error", logFn)
-		consoleObjTempl.Set("warn", logFn)
-		consoleObjTempl.Set("info", logFn)
-		consoleObjTempl.Set("debug", logFn)
-		consoleObj, _ := consoleObjTempl.NewInstance(rt.context)
-		global.Set("console", consoleObj)
-
-		// importScripts - Simplified implementation that fetches and runs scripts synchronously
-		importScriptsFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			url := info.Args()[0].String()
-			rt.logger.Debug("JS_IMPORT_START", "url", url)
-			data, err := rt.FetchAsset(url)
-			if err != nil {
-				rt.logger.Error("JS_IMPORT_ERROR", "url", url, "error", err)
-				val, _ := v8go.NewValue(iso, err.Error())
-				return iso.ThrowException(val)
-			}
-			rt.logger.Debug("JS_IMPORT_DONE", "url", url, "bytes", len(data))
-			_, err = rt.context.RunScript(string(data), url)
-			if err != nil {
-				rt.logger.Error("JS_IMPORT_EXEC_ERROR", "url", url, "error", err)
-				val, _ := v8go.NewValue(iso, err.Error())
-				return iso.ThrowException(val)
-			}
-			return nil
-		})
-		importScripts := importScriptsFn.GetFunction(rt.context)
-		global.Set("importScripts", importScripts)
-
-		// Fetch - Simplified implementation that only supports GET and asset-based fetching
-		fetchFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			args := info.Args()
-			if len(args) < 1 {
-				return nil
-			}
-			url := args[0].String()
-			rt.logger.Debug("JS_FETCH_URL", "url", url)
-			resolver, _ := v8go.NewPromiseResolver(rt.context)
-			go func() {
-				rt.logger.Debug("JS_FETCH_START", "url", url)
-				data, err := rt.FetchAsset(url)
-				rt.queueTask("fetch_resolve", func() {
-					if err != nil {
-						rt.logger.Error("JS_FETCH_ERROR", "url", url, "error", err)
-						val, _ := v8go.NewValue(iso, err.Error())
-						resolver.Reject(val)
-					} else {
-						rt.logger.Debug("JS_FETCH_DONE", "url", url, "bytes", len(data))
-						hexData := hex.EncodeToString(data)
-						arg, _ := v8go.NewValue(iso, hexData)
-						fn, _ := rt.context.Global().Get("createFetchResponse")
-						f, _ := fn.AsFunction()
-						resp, _ := f.Call(v8go.Undefined(iso), arg)
-						resolver.Resolve(resp)
-					}
-				})
-			}()
-			return resolver.GetPromise().Value
-		})
-		// setTimeout
-		setTimeoutFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			args := info.Args()
-			if len(args) < 1 {
-				return nil
-			}
-			fnVal := args[0]
-			ms := int32(0)
-			if len(args) >= 2 {
-				ms = args[1].Int32()
-			}
-			f, _ := fnVal.AsFunction()
-			time.AfterFunc(time.Duration(ms)*time.Millisecond, func() {
-				rt.queueTask("setTimeout", func() {
-					rt.mu.Lock()
-					closed := rt.done == nil
-					rt.mu.Unlock()
-					if !closed {
-						_, err := f.Call(v8go.Undefined(iso))
-						if err != nil {
-							rt.logger.Error("SET_TIMEOUT_ERROR", "error", err)
-						}
-					}
-				})
-			})
-			return nil
-		})
-		global.Set("setTimeout", setTimeoutFn.GetFunction(rt.context))
-
-		// setInterval
-		setIntervalFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			args := info.Args()
-			if len(args) < 1 {
-				return nil
-			}
-			fnVal := args[0]
-			ms := int32(0)
-			if len(args) >= 2 {
-				ms = args[1].Int32()
-			}
-			f, _ := fnVal.AsFunction()
-			ticker := time.NewTicker(time.Duration(ms) * time.Millisecond)
-			go func() {
-				for {
-					select {
-					case <-ticker.C:
-						rt.queueTask("setInterval", func() {
-							rt.mu.Lock()
-							closed := rt.done == nil
-							rt.mu.Unlock()
-							if !closed {
-								_, err := f.Call(v8go.Undefined(iso))
-								if err != nil {
-									rt.logger.Error("SET_INTERVAL_ERROR", "error", err)
-								}
-							}
-						})
-					case <-rt.done:
-						ticker.Stop()
-						return
-					}
-				}
-			}()
-			return nil
-		})
-		global.Set("setInterval", setIntervalFn.GetFunction(rt.context))
-
-		// btoa
-		btoaFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			args := info.Args()
-			if len(args) < 1 {
-				val, _ := v8go.NewValue(iso, "TypeError: 1 argument required, but only 0 present.")
-				return iso.ThrowException(val)
-			}
-			str := args[0].String()
-			data := make([]byte, 0, len(str))
-			for _, r := range str {
-				if r > 255 {
-					val, _ := v8go.NewValue(iso, "InvalidCharacterError: The string to be encoded contains characters outside of the Latin1 range.")
-					return iso.ThrowException(val)
-				}
-				data = append(data, byte(r))
-			}
-			encoded := base64.StdEncoding.EncodeToString(data)
-			val, _ := v8go.NewValue(iso, encoded)
-			return val
-		})
-		global.Set("btoa", btoaFn.GetFunction(rt.context))
-
-		// QueueTask
-		queueTaskFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-			fnVal := info.Args()[0]
-			f, _ := fnVal.AsFunction()
-			rt.queueTask("js_task", func() {
-				rt.mu.Lock()
-				closed := rt.done == nil
-				rt.mu.Unlock()
-				if !closed {
-					_, err := f.Call(v8go.Undefined(iso))
-					if err != nil {
-						rt.logger.Error("JS_TASK_ERROR", "error", err)
-					}
-				}
-			})
-			return nil
-		})
-		global.Set("__queueTask", queueTaskFn.GetFunction(rt.context))
-
-		fetch := fetchFn.GetFunction(rt.context)
-		global.Set("fetch", fetch)
+		rt.polyfill()
 
 		_, initErr = rt.context.RunScript(initJS, "init.js")
 
@@ -564,6 +376,14 @@ func (rt *Runtime) Run(code string) (string, error) {
 	return res.res, res.err
 }
 
+func (rt *Runtime) spawnGo(fn func()) {
+	rt.wg.Add(1)
+	go func() {
+		defer rt.wg.Done()
+		fn()
+	}()
+}
+
 func (rt *Runtime) Close() {
 	rt.mu.Lock()
 	if rt.closed {
@@ -573,6 +393,7 @@ func (rt *Runtime) Close() {
 	rt.closed = true
 	rt.mu.Unlock()
 	close(rt.done)
+	rt.wg.Wait()
 	rt.loopWg.Wait()
 	rt.context.Close()
 	rt.isolate.Dispose()
