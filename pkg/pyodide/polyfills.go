@@ -22,6 +22,7 @@ func (rt *Runtime) polyfill() {
 	rt.polyfillClearTimeout()
 	rt.polyfillClearInterval()
 	rt.polyfillBtoa()
+	rt.polyfillAtob()
 	rt.polyfillQueueTask()
 }
 
@@ -338,6 +339,44 @@ func (rt *Runtime) polyfillBtoa() {
 		return val
 	})
 	global.Set("btoa", btoaFn.GetFunction(rt.context))
+}
+
+func (rt *Runtime) polyfillAtob() {
+	iso := rt.isolate
+	global := rt.context.Global()
+
+	atobFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
+		}
+		args := info.Args()
+		encoded := args[0].String()
+
+		// Strip ASCII whitespace
+		stripped := make([]byte, 0, len(encoded))
+		for i := 0; i < len(encoded); i++ {
+			c := encoded[i]
+			if c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == ' ' {
+				continue
+			}
+			stripped = append(stripped, c)
+		}
+
+		data, err := base64.StdEncoding.DecodeString(string(stripped))
+		if err != nil {
+			val, _ := v8go.NewValue(iso, "InvalidCharacterError: The string to be decoded is not correctly encoded.")
+			return iso.ThrowException(val)
+		}
+
+		res := make([]rune, len(data))
+		for i, b := range data {
+			res[i] = rune(b)
+		}
+
+		val, _ := v8go.NewValue(iso, string(res))
+		return val
+	})
+	global.Set("atob", atobFn.GetFunction(rt.context))
 }
 
 func (rt *Runtime) polyfillQueueTask() {

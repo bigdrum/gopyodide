@@ -27,6 +27,11 @@ type task struct {
 	fn   func()
 }
 
+type mount struct {
+	hostPath string
+	readOnly bool
+}
+
 type Runtime struct {
 	isolate       *v8go.Isolate
 	context       *v8go.Context
@@ -46,6 +51,11 @@ type Runtime struct {
 	closed        bool
 	interruptBuf  []byte
 	interruptFree func()
+	fds           map[int]*os.File
+	nextFd        int
+	fdsMu         sync.Mutex
+	mounts        map[string]mount
+	mountsMu      sync.RWMutex
 }
 
 func (rt *Runtime) V8Isolate() *v8go.Isolate {
@@ -61,6 +71,9 @@ func New() (*Runtime, error) {
 		done:    make(chan struct{}),
 		logger:  slog.Default(),
 		timers:  make(map[int32]interface{}),
+		fds:     make(map[int]*os.File),
+		nextFd:  100, // Start from 100 to avoid conflicts with stdin/out/err
+		mounts:  make(map[string]mount),
 	}
 	return rt, nil
 }
@@ -79,6 +92,7 @@ func (rt *Runtime) Start() error {
 
 		rt.context = v8go.NewContext(rt.isolate)
 		rt.polyfill()
+		rt.polyfillFileSystem()
 
 		_, initErr = rt.context.RunScript(initJS, "init.js")
 
@@ -352,6 +366,84 @@ func (rt *Runtime) LoadPackage(name string) error {
 		return err
 	case <-time.After(120 * time.Second):
 		return errors.New("LoadPackage timeout after 120s")
+	}
+}
+
+func (rt *Runtime) MountHostDir(hostPath, mountPath string, readOnly bool) error {
+	rt.logger.Info("MountHostDir: starting", "hostPath", hostPath, "mountPath", mountPath, "readOnly", readOnly)
+
+	rt.mountsMu.Lock()
+	rt.mounts[mountPath] = mount{
+		hostPath: hostPath,
+		readOnly: readOnly,
+	}
+	rt.mountsMu.Unlock()
+
+	errCh := make(chan error, 1)
+
+	rt.queueTask("MountHostDir", func() {
+		script := fmt.Sprintf(`
+			(() => {
+				if (!globalThis.pyodide) {
+					throw new Error("Pyodide not initialized");
+				}
+				if (!globalThis.pyodide.FS) {
+					throw new Error("Pyodide FS not initialized");
+				}
+				
+				const mountPoint = %q;
+				const readOnly = %v;
+
+				if (!globalThis.pyodide.FS.analyzePath(mountPoint).exists) {
+					globalThis.pyodide.FS.mkdir(mountPoint);
+				}
+				globalThis.__mountGoFS(mountPoint, readOnly);
+				return "OK";
+			})()
+		`, mountPath, readOnly)
+
+		val, err := rt.context.RunScript(script, "mount_host_dir.js")
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		rt.await(val, func(v *v8go.Value) {
+			errCh <- nil
+		}, func(err error) {
+			errCh <- err
+		})
+	})
+
+	return <-errCh
+}
+
+func (rt *Runtime) Evaluate(ctx context.Context, script string) (*v8go.Value, error) {
+	type result struct {
+		val *v8go.Value
+		err error
+	}
+	resCh := make(chan result, 1)
+
+	rt.queueTask("Evaluate", func() {
+		val, err := rt.context.RunScript(script, "evaluate.js")
+		if err != nil {
+			resCh <- result{err: err}
+			return
+		}
+
+		rt.await(val, func(v *v8go.Value) {
+			resCh <- result{val: v}
+		}, func(err error) {
+			resCh <- result{err: err}
+		})
+	})
+
+	select {
+	case res := <-resCh:
+		return res.val, res.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 

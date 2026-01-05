@@ -329,5 +329,174 @@
 		console.log("Document polyfilled (deferred)");
 	};
 
-	console.log("Environment polyfilled (Base)");
+	// GoFS: Host Filesystem Bridge
+	const createGoFS = () => {
+		const getFS = () => (g.pyodide._module && g.pyodide._module.FS) ? g.pyodide._module.FS : g.pyodide.FS;
+		
+		var fsImpl = {
+			mount: function(mount) {
+				console.log("GoFS mount");
+				return fsImpl.createNode(null, '/', 16895, mount); // 16895 = S_IFDIR | 0777
+			},
+			createNode: function(parent, name, mode, dev) { 
+				// console.log("GoFS createNode: " + name);
+				var FS = getFS();
+				var node = FS.createNode(parent, name, mode, dev);
+				node.node_ops = fsImpl.node_ops;
+				node.stream_ops = fsImpl.stream_ops;
+				return node;
+			},
+			node_ops: {
+				getattr: function(node) {
+					try {
+						var FS = getFS();
+						var path = FS.getPath(node);
+						// console.log("GoFS getattr: " + path);
+						
+						var json = _go_fs_stat(path);
+						var info = JSON.parse(json);
+						
+						if (node.ino === undefined) {
+							node.ino = 0;
+						}
+
+						return {
+							dev: node.dev,
+							ino: node.ino,
+							mode: info.mode,
+							nlink: 1,
+							uid: 0,
+							gid: 0,
+							rdev: 0,
+							size: info.size,
+							atime: new Date(info.atimeMs),
+							mtime: new Date(info.mtimeMs),
+							ctime: new Date(info.ctimeMs),
+							blksize: 4096,
+							blocks: Math.ceil(info.size / 512)
+						};
+					} catch (e) {
+						// console.log("GoFS getattr error: " + e);
+						if (e.toString().includes("no such file") || e.toString().includes("ENOENT")) throw new FS.ErrnoError(2); // ENOENT
+						throw new FS.ErrnoError(5); // EIO
+					}
+				},
+				setattr: function(node, attr) {
+					var FS = getFS();
+					if (node.mount.opts.readOnly) throw new FS.ErrnoError(30); // EROFS
+				},
+				lookup: function(parent, name) {
+					// console.log("GoFS lookup: " + name);
+					try {
+						var FS = getFS();
+						var parentPath = FS.getPath(parent);
+						var path = parentPath === '/' ? ('/' + name) : (parentPath + '/' + name);
+						
+						// We don't need hostPath here anymore, just check if it exists via Go
+						var json = _go_fs_stat(path);
+						var info = JSON.parse(json);
+						var mode = info.isDirectory ? 16895 : 33206; 
+						var node = fsImpl.createNode(parent, name, mode, parent.dev);
+						return node;
+					} catch (e) {
+						var FS = getFS();
+						throw new FS.ErrnoError(2); // ENOENT
+					}
+				},
+				readdir: function(node) {
+					var FS = getFS();
+					var path = FS.getPath(node);
+					
+					try {
+						var names = JSON.parse(_go_fs_readdir(path));
+						names.push('.', '..');
+						return names;
+					} catch (e) {
+						var FS = getFS();
+						throw new FS.ErrnoError(2);
+					}
+				},
+				mknod: function(parent, name, mode, dev) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				rename: function(old_node, new_parent, new_name) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				unlink: function(parent, name) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				rmdir: function(parent, name) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				symlink: function(parent, newname, oldpath) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				readlink: function(node) { var FS = getFS(); throw new FS.ErrnoError(30); },
+			},
+			stream_ops: {
+				open: function(stream) {
+					try {
+						var FS = getFS();
+						var path = FS.getPath(stream.node);
+						
+						// console.log("GoFS open path: " + path);
+						var fd = _go_fs_open(path, stream.flags, 0);
+						stream.nfd = fd;
+					} catch (e) {
+						var FS = getFS();
+						if (e.toString().includes("EROFS")) throw new FS.ErrnoError(30);
+						console.log("GoFS open fail: " + e);
+						throw new FS.ErrnoError(2);
+					}
+				},
+				close: function(stream) {
+					_go_fs_close(stream.nfd);
+				},
+				read: function(stream, buffer, offset, length, position) {
+					// console.log("GoFS read");
+					try {
+						var resStr = _go_fs_read(stream.nfd, null, 0, length, position);
+						var res = JSON.parse(resStr);
+						if (res.bytesRead > 0) {
+							// Decode base64 to buffer
+							var bin = atob(res.data);
+							for (var i = 0; i < bin.length; i++) {
+								buffer[offset + i] = bin.charCodeAt(i);
+							}
+						}
+						return res.bytesRead;
+					} catch (e) {
+						console.log("GoFS read fail: " + e);
+						throw new FS.ErrnoError(5);
+					}
+				},
+				write: function(stream, buffer, offset, length, position) { 
+					var FS = getFS();
+					if (stream.node.mount.opts.readOnly) throw new FS.ErrnoError(30); // EROFS
+					throw new FS.ErrnoError(1); // EPERM (not implemented yet)
+				},
+				llseek: function(stream, offset, whence) {
+					var position = stream.position;
+					if (whence === 0) {
+						position = offset;
+					} else if (whence === 1) {
+						position += offset;
+					} else if (whence === 2) {
+						if (FS.isFile(stream.node.mode)) {
+							var stat = stream.node.node_ops.getattr(stream.node);
+							position = stat.size + offset;
+						}
+					}
+					if (position < 0) {
+						throw new FS.ErrnoError(28); // EINVAL
+					}
+					return position;
+				}
+			}
+		};
+		return fsImpl;
+	};
+	var registerGoFS = () => {
+		g.pyodide.FS.filesystems.GOFS = createGoFS();
+		console.log("GoFS registered");
+	};
+
+	g.__mountGoFS = (mountPoint, readOnly) => {
+		if (!g.pyodide.FS.filesystems.GOFS) {
+			registerGoFS();
+		}
+		g.pyodide.FS.mount(g.pyodide.FS.filesystems.GOFS, {readOnly: readOnly}, mountPoint);
+		console.log("GoFS mounted at " + mountPoint + " (readOnly: " + readOnly + ")");
+	};
+	console.log("Environment polyfilled (Base + GoFS)");
 })();
