@@ -27,17 +27,20 @@ type task struct {
 }
 
 type Runtime struct {
-	isolate    *v8go.Isolate
-	context    *v8go.Context
-	assets     map[string][]byte
-	tasks      chan task
-	done       chan struct{}
-	mu         sync.Mutex
-	cacheDir   string
-	logger     *slog.Logger
-	waiter     *v8go.Function
-	loopWg     sync.WaitGroup
-	wg         sync.WaitGroup
+	isolate     *v8go.Isolate
+	context     *v8go.Context
+	assets      map[string][]byte
+	tasks       chan task
+	done        chan struct{}
+	mu          sync.Mutex
+	timersMu    sync.Mutex
+	timers      map[int32]interface{}
+	nextTimerID int32
+	cacheDir    string
+	logger      *slog.Logger
+	waiter      *v8go.Function
+	loopWg      sync.WaitGroup
+	wg          sync.WaitGroup
 	activeTask  string
 	closed      bool
 }
@@ -50,7 +53,12 @@ func New() (*Runtime, error) {
 		tasks:   make(chan task, 100),
 		done:    make(chan struct{}),
 		logger:  slog.Default(),
+		timers:  make(map[int32]interface{}),
 	}
+	return rt, nil
+}
+
+func (rt *Runtime) Start() error {
 	rt.loopWg.Add(1)
 	go rt.loop()
 	rt.loopWg.Add(1)
@@ -62,7 +70,7 @@ func New() (*Runtime, error) {
 	rt.queueTask("init", func() {
 		defer wg.Done()
 
-		rt.context = v8go.NewContext(iso)
+		rt.context = v8go.NewContext(rt.isolate)
 		rt.polyfill()
 
 		_, initErr = rt.context.RunScript(initJS, "init.js")
@@ -71,7 +79,7 @@ func New() (*Runtime, error) {
 		rt.waiter, _ = waiterVal.AsFunction()
 	})
 	wg.Wait()
-	return rt, initErr
+	return initErr
 }
 
 func (rt *Runtime) loop() {
@@ -393,6 +401,19 @@ func (rt *Runtime) Close() {
 	rt.closed = true
 	rt.mu.Unlock()
 	close(rt.done)
+
+	rt.timersMu.Lock()
+	for id, t := range rt.timers {
+		switch T := t.(type) {
+		case *time.Timer:
+			T.Stop()
+		case *time.Ticker:
+			T.Stop()
+		}
+		delete(rt.timers, id)
+	}
+	rt.timersMu.Unlock()
+
 	rt.wg.Wait()
 	rt.loopWg.Wait()
 	rt.context.Close()

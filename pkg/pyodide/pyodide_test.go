@@ -1,6 +1,7 @@
 package pyodide
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 )
@@ -133,9 +134,15 @@ func setup(t *testing.T) (*Runtime, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	// make rt.logger logs Debug level
+	rt.logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 	rt.SetCacheDir(testTmpDir)
-
+	err = rt.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = rt.LoadPyodide(pyodideBaseURL)
 	if err != nil {
 		rt.Close()

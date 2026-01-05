@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -16,6 +17,8 @@ func (rt *Runtime) polyfill() {
 	rt.polyfillFetch()
 	rt.polyfillSetTimeout()
 	rt.polyfillSetInterval()
+	rt.polyfillClearTimeout()
+	rt.polyfillClearInterval()
 	rt.polyfillBtoa()
 	rt.polyfillQueueTask()
 }
@@ -53,6 +56,9 @@ func (rt *Runtime) polyfillImportScripts() {
 	global := rt.context.Global()
 
 	importScriptsFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
+		}
 		url := info.Args()[0].String()
 		rt.logger.Debug("JS_IMPORT_START", "url", url)
 		data, err := rt.FetchAsset(url)
@@ -87,14 +93,11 @@ func (rt *Runtime) polyfillFetch() {
 	global := rt.context.Global()
 
 	fetchFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
+		}
 		args := info.Args()
 		resolver, _ := v8go.NewPromiseResolver(rt.context)
-
-		if len(args) < 1 {
-			val, _ := v8go.NewValue(iso, "TypeError: 1 argument required, but only 0 present.")
-			resolver.Reject(iso.ThrowException(val))
-			return resolver.GetPromise().Value
-		}
 		url := args[0].String()
 		rt.logger.Debug("JS_FETCH_URL", "url", url)
 		rt.spawnGo(func() {
@@ -151,21 +154,26 @@ func (rt *Runtime) polyfillSetTimeout() {
 	global := rt.context.Global()
 
 	setTimeoutFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-		args := info.Args()
-		if len(args) < 1 {
-			return nil
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
 		}
+		args := info.Args()
 		fnVal := args[0]
 		ms := int32(0)
 		if len(args) >= 2 {
 			ms = args[1].Int32()
 		}
 		f, _ := fnVal.AsFunction()
-		rt.spawnGo(func() {
-			time.Sleep(time.Duration(ms) * time.Millisecond)
+
+		rt.timersMu.Lock()
+		timerID := rt.nextTimerID
+		rt.nextTimerID++
+		rt.timersMu.Unlock()
+
+		timer := time.AfterFunc(time.Duration(ms)*time.Millisecond, func() {
 			rt.queueTask("setTimeout", func() {
 				rt.mu.Lock()
-				closed := rt.done == nil
+				closed := rt.closed
 				rt.mu.Unlock()
 				if !closed {
 					_, err := f.Call(v8go.Undefined(iso))
@@ -174,10 +182,45 @@ func (rt *Runtime) polyfillSetTimeout() {
 					}
 				}
 			})
+			rt.timersMu.Lock()
+			delete(rt.timers, timerID)
+			rt.timersMu.Unlock()
 		})
-		return nil
+
+		rt.timersMu.Lock()
+		rt.timers[timerID] = timer
+		rt.timersMu.Unlock()
+
+		val, _ := v8go.NewValue(iso, int32(timerID))
+		return val
 	})
 	global.Set("setTimeout", setTimeoutFn.GetFunction(rt.context))
+}
+
+func (rt *Runtime) polyfillClearTimeout() {
+	iso := rt.isolate
+	global := rt.context.Global()
+
+	clearTimeoutFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
+		}
+		args := info.Args()
+		timerID := args[0].Int32()
+
+		rt.timersMu.Lock()
+		defer rt.timersMu.Unlock()
+
+		if timer, ok := rt.timers[timerID]; ok {
+			if t, ok := timer.(*time.Timer); ok {
+				t.Stop()
+				delete(rt.timers, timerID)
+			}
+		}
+
+		return nil
+	})
+	global.Set("clearTimeout", clearTimeoutFn.GetFunction(rt.context))
 }
 
 func (rt *Runtime) polyfillSetInterval() {
@@ -185,22 +228,42 @@ func (rt *Runtime) polyfillSetInterval() {
 	global := rt.context.Global()
 
 	setIntervalFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-		args := info.Args()
-		if len(args) < 1 {
-			return nil
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
 		}
+		args := info.Args()
 		fnVal := args[0]
-		ms := int32(0)
+		ms := int32(1)
 		if len(args) >= 2 {
 			ms = args[1].Int32()
 		}
 		f, _ := fnVal.AsFunction()
 		ticker := time.NewTicker(time.Duration(ms) * time.Millisecond)
+
+		rt.timersMu.Lock()
+		timerID := rt.nextTimerID
+		rt.nextTimerID++
+		rt.timers[timerID] = ticker
+		rt.timersMu.Unlock()
+
 		rt.spawnGo(func() {
+			defer func() {
+				ticker.Stop()
+				rt.timersMu.Lock()
+				delete(rt.timers, timerID)
+				rt.timersMu.Unlock()
+			}()
 			for {
 				select {
 				case <-ticker.C:
 					rt.queueTask("setInterval", func() {
+						rt.timersMu.Lock()
+						_, ok := rt.timers[timerID]
+						rt.timersMu.Unlock()
+						if !ok {
+							return
+						}
+
 						rt.mu.Lock()
 						closed := rt.done == nil
 						rt.mu.Unlock()
@@ -212,14 +275,40 @@ func (rt *Runtime) polyfillSetInterval() {
 						}
 					})
 				case <-rt.done:
-					ticker.Stop()
 					return
 				}
 			}
 		})
-		return nil
+		val, _ := v8go.NewValue(iso, int32(timerID))
+		return val
 	})
 	global.Set("setInterval", setIntervalFn.GetFunction(rt.context))
+}
+
+func (rt *Runtime) polyfillClearInterval() {
+	iso := rt.isolate
+	global := rt.context.Global()
+
+	clearIntervalFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
+		}
+		args := info.Args()
+		timerID := args[0].Int32()
+
+		rt.timersMu.Lock()
+		defer rt.timersMu.Unlock()
+
+		if ticker, ok := rt.timers[timerID]; ok {
+			if t, ok := ticker.(*time.Ticker); ok {
+				t.Stop()
+				delete(rt.timers, timerID)
+			}
+		}
+
+		return nil
+	})
+	global.Set("clearInterval", clearIntervalFn.GetFunction(rt.context))
 }
 
 func (rt *Runtime) polyfillBtoa() {
@@ -227,11 +316,10 @@ func (rt *Runtime) polyfillBtoa() {
 	global := rt.context.Global()
 
 	btoaFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-		args := info.Args()
-		if len(args) < 1 {
-			val, _ := v8go.NewValue(iso, "TypeError: 1 argument required, but only 0 present.")
-			return iso.ThrowException(val)
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
 		}
+		args := info.Args()
 		str := args[0].String()
 		data := make([]byte, 0, len(str))
 		for _, r := range str {
@@ -269,4 +357,14 @@ func (rt *Runtime) polyfillQueueTask() {
 		return nil
 	})
 	global.Set("__queueTask", queueTaskFn.GetFunction(rt.context))
+}
+
+func (rt *Runtime) checkArgs(info *v8go.FunctionCallbackInfo, expected int) *v8go.Value {
+	args := info.Args()
+	if len(args) < expected {
+		msg := fmt.Sprintf("TypeError: %d argument required, but only %d present.", expected, len(args))
+		val, _ := v8go.NewValue(rt.isolate, msg)
+		return rt.isolate.ThrowException(val)
+	}
+	return nil
 }

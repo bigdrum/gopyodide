@@ -79,9 +79,6 @@
 	g.requestAnimationFrame = (fn) => setTimeout(fn, 16);
 	g.cancelAnimationFrame = (id) => {};
 	
-	g.clearTimeout = (id) => {};
-	g.clearInterval = (id) => {};
-	
 	// Simplified WebAssembly polyfills to handle different instantiation patterns
 	if (typeof WebAssembly !== 'undefined') {
 		const oldInstantiate = WebAssembly.instantiate;
