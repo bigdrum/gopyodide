@@ -1,4 +1,4 @@
-module gopyodide
+module github.com/bigdrum/gopyodide
 
 go 1.25.5
 
