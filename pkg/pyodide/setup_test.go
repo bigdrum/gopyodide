@@ -9,6 +9,9 @@ import (
 )
 
 const pyodideVersion = "0.27.7"
+
+// Somehow 0.28.0-0.29.0 stopped supporting duckdb.
+// const pyodideVersion = "0.28.0"
 const pyodideBaseURL = "https://cdn.jsdelivr.net/pyodide/v" + pyodideVersion + "/full/"
 
 func setup(t *testing.T) (*pyodide.Runtime, func()) {

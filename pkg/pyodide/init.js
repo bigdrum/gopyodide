@@ -427,6 +427,7 @@
 				return fsImpl.createNode(null, '/', 16895, mount); // 16895 = S_IFDIR | 0777
 			},
 			createNode: function (parent, name, mode, dev) {
+				// console.log("GoFS createNode", parent, name, mode, dev);
 				var FS = getFS();
 				var node = FS.createNode(parent, name, mode, dev);
 				node.node_ops = fsImpl.node_ops;
@@ -435,6 +436,7 @@
 			},
 			node_ops: {
 				getattr: function (node) {
+					// console.log("GoFS getattr", node);
 					try {
 						var FS = getFS();
 						var path = FS.getPath(node);
@@ -462,7 +464,8 @@
 							blocks: Math.ceil(info.size / 512)
 						};
 					} catch (e) {
-						if (e.toString().includes("no such file") || e.toString().includes("ENOENT")) throw new FS.ErrnoError(2); // ENOENT
+						console.log("GoFS getattr fail", e);
+						if (e.toString().includes("no such file") || e.toString().includes("ENOENT")) throw new FS.ErrnoError(44); // ENOENT
 						throw new FS.ErrnoError(5); // EIO
 					}
 				},
@@ -471,6 +474,9 @@
 					if (node.mount.opts.readOnly) throw new FS.ErrnoError(30); // EROFS
 				},
 				lookup: function (parent, name) {
+					// console.log("GoFS lookup", parent, name);
+					// Print stacktrace
+					// console.log(new Error().stack);
 					try {
 						var FS = getFS();
 						var parentPath = FS.getPath(parent);
@@ -483,8 +489,9 @@
 						var node = fsImpl.createNode(parent, name, mode, parent.dev);
 						return node;
 					} catch (e) {
+						// console.log("GoFS lookup fail", e);
 						var FS = getFS();
-						throw new FS.ErrnoError(2); // ENOENT
+						throw new FS.ErrnoError(44); // ENOENT
 					}
 				},
 				readdir: function (node) {
