@@ -119,9 +119,9 @@ func (rt *Runtime) loop() {
 			rt.mu.Lock()
 			rt.activeTask = t.name
 			rt.mu.Unlock()
-			rt.logger.Debug("Runtime loop start", "task", t.name)
+			//rt.logger.Debug("Runtime loop start", "task", t.name)
 			t.fn()
-			rt.logger.Debug("Runtime loop done", "task", t.name)
+			//	rt.logger.Debug("Runtime loop done", "task", t.name)
 			rt.mu.Lock()
 			rt.activeTask = ""
 			rt.mu.Unlock()

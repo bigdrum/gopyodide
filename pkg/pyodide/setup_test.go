@@ -8,7 +8,7 @@ import (
 	"github.com/bigdrum/gopyodide/pkg/pyodide"
 )
 
-const pyodideVersion = "0.27.0"
+const pyodideVersion = "0.27.6"
 const pyodideBaseURL = "https://cdn.jsdelivr.net/pyodide/v" + pyodideVersion + "/full/"
 
 func setup(t *testing.T) (*pyodide.Runtime, func()) {
@@ -20,10 +20,20 @@ func setup(t *testing.T) (*pyodide.Runtime, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	replaceAttr := func(groups []string, a slog.Attr) slog.Attr {
+		// Reduce verbosity to save tokens for ai.
+		if a.Key == slog.TimeKey || a.Key == slog.LevelKey {
+			return slog.Attr{}
+		}
+		return a
+	}
+
 	rt.SetLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		// To enable debug logging, uncomment the following line:
 		Level: slog.LevelDebug,
 		// Level: slog.LevelInfo,
+		ReplaceAttr: replaceAttr,
 	})))
 	rt.SetCacheDir(testTmpDir)
 	err = rt.Start()
