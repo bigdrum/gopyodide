@@ -8,7 +8,7 @@ import (
 	"github.com/bigdrum/gopyodide/pkg/pyodide"
 )
 
-const pyodideVersion = "0.28.3"
+const pyodideVersion = "0.27.7"
 const pyodideBaseURL = "https://cdn.jsdelivr.net/pyodide/v" + pyodideVersion + "/full/"
 
 func setup(t *testing.T) (*pyodide.Runtime, func()) {

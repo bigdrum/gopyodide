@@ -191,7 +191,7 @@ func (rt *Runtime) await(val *v8go.Value, onResolve func(*v8go.Value), onReject 
 }
 
 func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
-	rt.logger.Debug("FetchAsset", "url", url)
+	// rt.logger.Debug("FetchAsset", "url", url)
 	rt.mu.Lock()
 	if d, ok := rt.assets[url]; ok {
 		rt.mu.Unlock()
@@ -207,7 +207,7 @@ func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
 			rt.mu.Lock()
 			rt.assets[url] = d
 			rt.mu.Unlock()
-			rt.logger.Debug("FetchAsset local cache hit", "url", url)
+			// rt.logger.Debug("FetchAsset local cache hit", "url", url)
 			return d, nil
 		}
 	}
