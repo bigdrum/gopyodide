@@ -205,15 +205,15 @@ func (rt *Runtime) FetchAsset(url string) ([]byte, error) {
 			rt.mu.Lock()
 			rt.assets[url] = d
 			rt.mu.Unlock()
-			rt.logger.Info("FetchAsset local cache hit", "url", url)
+			rt.logger.Debug("FetchAsset local cache hit", "url", url)
 			return d, nil
 		}
 	}
 
-	rt.logger.Info("FetchAsset http", "url", url)
+	rt.logger.Debug("FetchAsset http", "url", url)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(url)
-	rt.logger.Info("FetchAsset http done", "url", url)
+	rt.logger.Debug("FetchAsset http done", "url", url)
 	if err != nil {
 		return nil, err
 	}

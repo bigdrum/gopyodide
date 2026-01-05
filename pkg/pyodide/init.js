@@ -1,6 +1,6 @@
-(function() {
+(function () {
 	const g = globalThis;
-	
+
 	const createLogger = (name, obj) => {
 		return new Proxy(obj, {
 			get(target, prop) {
@@ -30,7 +30,7 @@
 			try {
 				const match = this.href.match(/^https?:\/\/[^\/]+(\/[^?#]*)/);
 				return match ? match[1] : (this.href.startsWith('/') ? this.href.split(/[?#]/)[0] : '/');
-			} catch(e) { return '/'; }
+			} catch (e) { return '/'; }
 		}
 		toString() { return this.href; }
 	};
@@ -51,13 +51,13 @@
 	g.location = createLogger("location", location);
 
 	// Simplified navigator polyfill
-	g.navigator = createLogger("navigator", { 
+	g.navigator = createLogger("navigator", {
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 		platform: "MacIntel",
 		languages: ["en-US", "en"],
 		onLine: true
 	});
-	
+
 	g.self = g;
 	g.window = g;
 	g.top = g;
@@ -77,8 +77,8 @@
 	// Simplified performance polyfill
 	g.performance = { now: () => Date.now() };
 	g.requestAnimationFrame = (fn) => setTimeout(fn, 16);
-	g.cancelAnimationFrame = (id) => {};
-	
+	g.cancelAnimationFrame = (id) => { };
+
 	// Simplified WebAssembly polyfills to handle different instantiation patterns
 	if (typeof WebAssembly !== 'undefined') {
 		const oldInstantiate = WebAssembly.instantiate;
@@ -98,7 +98,7 @@
 				return Promise.reject(e);
 			}
 		};
-		
+
 		if (!WebAssembly.instantiateStreaming) {
 			WebAssembly.instantiateStreaming = async (resp, importObject) => {
 				const r = await resp;
@@ -157,7 +157,7 @@
 							}
 						});
 					},
-					start() {}
+					start() { }
 				};
 				return port;
 			};
@@ -171,7 +171,7 @@
 	g.addEventListener = (ev, fn) => {
 		console.log("GLOBAL_ADD_EVENT_LISTENER: " + ev);
 	};
-	g.removeEventListener = (ev, fn) => {};
+	g.removeEventListener = (ev, fn) => { };
 
 	const hexTab = new Uint8Array(256);
 	for (let i = 0; i < 16; i++) {
@@ -266,7 +266,7 @@
 				if (this.onerror) this.onerror(e);
 			});
 		}
-		setRequestHeader() {}
+		setRequestHeader() { }
 		getResponseHeader() { return null; }
 	};
 
@@ -307,12 +307,12 @@
 			getAttribute(n) { return this[n]; },
 			style: {},
 			addEventListener(ev, fn) { if (ev === 'load') this.onload = fn; },
-			removeEventListener: () => {}
+			removeEventListener: () => { }
 		});
 
 		const head = createMockElement('HEAD');
-		const document = { 
-			currentScript: null, 
+		const document = {
+			currentScript: null,
 			createElement: (tag) => createMockElement(tag),
 			getElementsByTagName: (tag) => {
 				if (tag.toUpperCase() === 'HEAD') return [head];
@@ -325,20 +325,20 @@
 		};
 		g.document = createLogger("document", document);
 		g.URL.createObjectURL = (obj) => "blob:mock";
-		g.URL.revokeObjectURL = (url) => {};
+		g.URL.revokeObjectURL = (url) => { };
 		console.log("Document polyfilled (deferred)");
 	};
 
 	// GoFS: Host Filesystem Bridge
 	const createGoFS = () => {
 		const getFS = () => (g.pyodide._module && g.pyodide._module.FS) ? g.pyodide._module.FS : g.pyodide.FS;
-		
+
 		var fsImpl = {
-			mount: function(mount) {
+			mount: function (mount) {
 				console.log("GoFS mount");
 				return fsImpl.createNode(null, '/', 16895, mount); // 16895 = S_IFDIR | 0777
 			},
-			createNode: function(parent, name, mode, dev) { 
+			createNode: function (parent, name, mode, dev) {
 				// console.log("GoFS createNode: " + name);
 				var FS = getFS();
 				var node = FS.createNode(parent, name, mode, dev);
@@ -347,15 +347,15 @@
 				return node;
 			},
 			node_ops: {
-				getattr: function(node) {
+				getattr: function (node) {
 					try {
 						var FS = getFS();
 						var path = FS.getPath(node);
 						// console.log("GoFS getattr: " + path);
-						
+
 						var json = _go_fs_stat(path);
 						var info = JSON.parse(json);
-						
+
 						if (node.ino === undefined) {
 							node.ino = 0;
 						}
@@ -381,21 +381,21 @@
 						throw new FS.ErrnoError(5); // EIO
 					}
 				},
-				setattr: function(node, attr) {
+				setattr: function (node, attr) {
 					var FS = getFS();
 					if (node.mount.opts.readOnly) throw new FS.ErrnoError(30); // EROFS
 				},
-				lookup: function(parent, name) {
+				lookup: function (parent, name) {
 					// console.log("GoFS lookup: " + name);
 					try {
 						var FS = getFS();
 						var parentPath = FS.getPath(parent);
 						var path = parentPath === '/' ? ('/' + name) : (parentPath + '/' + name);
-						
+
 						// We don't need hostPath here anymore, just check if it exists via Go
 						var json = _go_fs_stat(path);
 						var info = JSON.parse(json);
-						var mode = info.isDirectory ? 16895 : 33206; 
+						var mode = info.isDirectory ? 16895 : 33206;
 						var node = fsImpl.createNode(parent, name, mode, parent.dev);
 						return node;
 					} catch (e) {
@@ -403,10 +403,10 @@
 						throw new FS.ErrnoError(2); // ENOENT
 					}
 				},
-				readdir: function(node) {
+				readdir: function (node) {
 					var FS = getFS();
 					var path = FS.getPath(node);
-					
+
 					try {
 						var names = JSON.parse(_go_fs_readdir(path));
 						names.push('.', '..');
@@ -416,19 +416,32 @@
 						throw new FS.ErrnoError(2);
 					}
 				},
-				mknod: function(parent, name, mode, dev) { var FS = getFS(); throw new FS.ErrnoError(30); },
-				rename: function(old_node, new_parent, new_name) { var FS = getFS(); throw new FS.ErrnoError(30); },
-				unlink: function(parent, name) { var FS = getFS(); throw new FS.ErrnoError(30); },
-				rmdir: function(parent, name) { var FS = getFS(); throw new FS.ErrnoError(30); },
-				symlink: function(parent, newname, oldpath) { var FS = getFS(); throw new FS.ErrnoError(30); },
-				readlink: function(node) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				mknod: function (parent, name, mode, dev) {
+					var FS = getFS();
+					if (parent.mount.opts.readOnly) throw new FS.ErrnoError(30);
+					try {
+						var parentPath = FS.getPath(parent);
+						var path = parentPath === '/' ? ('/' + name) : (parentPath + '/' + name);
+						_go_fs_mknod(path, mode);
+						var node = fsImpl.createNode(parent, name, mode, dev);
+						return node;
+					} catch (e) {
+						if (e.toString().includes("EEXIST")) throw new FS.ErrnoError(17);
+						throw new FS.ErrnoError(1);
+					}
+				},
+				rename: function (old_node, new_parent, new_name) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				unlink: function (parent, name) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				rmdir: function (parent, name) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				symlink: function (parent, newname, oldpath) { var FS = getFS(); throw new FS.ErrnoError(30); },
+				readlink: function (node) { var FS = getFS(); throw new FS.ErrnoError(30); },
 			},
 			stream_ops: {
-				open: function(stream) {
+				open: function (stream) {
 					try {
 						var FS = getFS();
 						var path = FS.getPath(stream.node);
-						
+
 						// console.log("GoFS open path: " + path);
 						var fd = _go_fs_open(path, stream.flags, 0);
 						stream.nfd = fd;
@@ -439,10 +452,10 @@
 						throw new FS.ErrnoError(2);
 					}
 				},
-				close: function(stream) {
+				close: function (stream) {
 					_go_fs_close(stream.nfd);
 				},
-				read: function(stream, buffer, offset, length, position) {
+				read: function (stream, buffer, offset, length, position) {
 					// console.log("GoFS read");
 					try {
 						var resStr = _go_fs_read(stream.nfd, null, 0, length, position);
@@ -460,12 +473,20 @@
 						throw new FS.ErrnoError(5);
 					}
 				},
-				write: function(stream, buffer, offset, length, position) { 
+				write: function (stream, buffer, offset, length, position) {
 					var FS = getFS();
-					if (stream.node.mount.opts.readOnly) throw new FS.ErrnoError(30); // EROFS
-					throw new FS.ErrnoError(1); // EPERM (not implemented yet)
+					if (stream.node.mount.opts.readOnly) throw new FS.ErrnoError(30);
+					try {
+						var slice = buffer.subarray(offset, offset + length);
+						var binary = '';
+						for (var i = 0; i < slice.length; i++) binary += String.fromCharCode(slice[i]);
+						return _go_fs_write(stream.nfd, btoa(binary), length, position);
+					} catch (e) {
+						console.log("GoFS write error: " + e);
+						throw new FS.ErrnoError(5);
+					}
 				},
-				llseek: function(stream, offset, whence) {
+				llseek: function (stream, offset, whence) {
 					var position = stream.position;
 					if (whence === 0) {
 						position = offset;
@@ -495,7 +516,7 @@
 		if (!g.pyodide.FS.filesystems.GOFS) {
 			registerGoFS();
 		}
-		g.pyodide.FS.mount(g.pyodide.FS.filesystems.GOFS, {readOnly: readOnly}, mountPoint);
+		g.pyodide.FS.mount(g.pyodide.FS.filesystems.GOFS, { readOnly: readOnly }, mountPoint);
 		console.log("GoFS mounted at " + mountPoint + " (readOnly: " + readOnly + ")");
 	};
 	console.log("Environment polyfilled (Base + GoFS)");

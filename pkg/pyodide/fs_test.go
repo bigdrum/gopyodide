@@ -129,3 +129,46 @@ res
 		t.Logf("Got expected error: %s", res)
 	}
 }
+
+func TestWriteFile(t *testing.T) {
+	rt, done := setup(t)
+	defer done()
+
+	tmpDir, err := os.MkdirTemp("", "pyodide-write-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	err = rt.MountHostDir(tmpDir, "/mnt_write", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	content := "Hello from pyodide"
+
+	script := `
+import os
+file_path = "/mnt_write/test_write.txt"
+with open(file_path, "w") as f:
+    f.write("` + content + `")
+"OK"
+`
+	_, err = rt.Run(ctx, script)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hostFilePath := filepath.Join(tmpDir, "test_write.txt")
+	readContent, err := os.ReadFile(hostFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(readContent) != content {
+		t.Errorf("expected %q, got %q", content, string(readContent))
+	}
+}

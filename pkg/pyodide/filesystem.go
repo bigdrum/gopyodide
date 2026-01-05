@@ -145,6 +145,62 @@ func (rt *Runtime) polyfillFileSystem() {
 		val, _ := v8go.NewValue(iso, resJSON)
 		return val
 	})
+
+	createFn("_go_fs_write", func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		fd := int(info.Args()[0].Int32())
+		encoded := info.Args()[1].String()
+		length := int(info.Args()[2].Int32())
+		position := info.Args()[3] // Number or null
+
+		f := rt.getFD(fd)
+		if f == nil {
+			return rt.throwError(fmt.Errorf("EBADF: bad file descriptor %d", fd))
+		}
+
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return rt.throwError(err)
+		}
+
+		if len(data) > length {
+			data = data[:length]
+		}
+
+		var n int
+		if !position.IsUndefined() && !position.IsNull() {
+			pos := position.Integer()
+			n, err = f.WriteAt(data, pos)
+		} else {
+			n, err = f.Write(data)
+		}
+
+		if err != nil {
+			return rt.throwError(err)
+		}
+
+		val, _ := v8go.NewValue(iso, int32(n))
+		return val
+	})
+
+	createFn("_go_fs_mknod", func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		vpath := info.Args()[0].String()
+		mode := uint32(info.Args()[1].Int32())
+
+		hostPath, readOnly, err := rt.resolvePath(vpath)
+		if err != nil {
+			return rt.throwError(err)
+		}
+		if readOnly {
+			return rt.throwError(fmt.Errorf("EROFS: read-only file system %q", vpath))
+		}
+
+		f, err := os.OpenFile(hostPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, os.FileMode(mode&0777))
+		if err != nil {
+			return rt.throwError(err)
+		}
+		f.Close()
+		return v8go.Undefined(iso)
+	})
 }
 
 func (rt *Runtime) throwError(err error) *v8go.Value {
