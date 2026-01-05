@@ -56,6 +56,8 @@ type Runtime struct {
 	fdsMu         sync.Mutex
 	mounts        map[string]mount
 	mountsMu      sync.RWMutex
+	fsTransitBuf  []byte
+	fsTransitFree func()
 }
 
 func (rt *Runtime) V8Isolate() *v8go.Isolate {
@@ -293,7 +295,11 @@ func (rt *Runtime) LoadPyodide(indexURL string) error {
 					const sab = new SharedArrayBuffer(16);
 					const int32View = new Int32Array(sab);
 					p.setInterruptBuffer(int32View);
-					return sab; 
+					
+					const fsSAB = new SharedArrayBuffer(1024 * 1024 * 4); // 4MB transit buffer
+					globalThis.__fsTransitSAB = fsSAB;
+					
+					return { sab, fsSAB }; 
 				})
 				.catch(e => {
 					console.log("loadPyodide promise rejected internally: " + e + "\nSTACK: " + e.stack);
@@ -309,13 +315,24 @@ func (rt *Runtime) LoadPyodide(indexURL string) error {
 		}
 
 		rt.await(val, func(v *v8go.Value) {
-			if v.IsSharedArrayBuffer() {
-				buf, free, _ := v.SharedArrayBufferGetContents()
-				rt.interruptBuf = buf
-				rt.interruptFree = free
-				rt.logger.Debug("LoadPyodide: interrupt buffer initialized", "len", len(buf))
+			if v.IsObject() {
+				obj, _ := v.AsObject()
+				sabVal, _ := obj.Get("sab")
+				if sabVal.IsSharedArrayBuffer() {
+					buf, free, _ := sabVal.SharedArrayBufferGetContents()
+					rt.interruptBuf = buf
+					rt.interruptFree = free
+					rt.logger.Debug("LoadPyodide: interrupt buffer initialized", "len", len(buf))
+				}
+				fsSABVal, _ := obj.Get("fsSAB")
+				if fsSABVal.IsSharedArrayBuffer() {
+					buf, free, _ := fsSABVal.SharedArrayBufferGetContents()
+					rt.fsTransitBuf = buf
+					rt.fsTransitFree = free
+					rt.logger.Debug("LoadPyodide: FS transit buffer initialized", "len", len(buf))
+				}
 			} else {
-				rt.logger.Warn("LoadPyodide: returned value is not SharedArrayBuffer")
+				rt.logger.Warn("LoadPyodide: returned value is not an object")
 			}
 			errCh <- nil
 		}, func(err error) {
@@ -546,6 +563,11 @@ func (rt *Runtime) Close() {
 		rt.interruptFree()
 		rt.interruptFree = nil
 		rt.interruptBuf = nil
+	}
+	if rt.fsTransitFree != nil {
+		rt.fsTransitFree()
+		rt.fsTransitFree = nil
+		rt.fsTransitBuf = nil
 	}
 
 	rt.wg.Wait()

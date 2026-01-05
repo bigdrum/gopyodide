@@ -2,6 +2,7 @@ package pyodide_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -170,5 +171,50 @@ with open(file_path, "w") as f:
 
 	if string(readContent) != content {
 		t.Errorf("expected %q, got %q", content, string(readContent))
+	}
+}
+
+func TestLargeFileWriteRead(t *testing.T) {
+	rt, done := setup(t)
+	defer done()
+
+	tmpDir, err := os.MkdirTemp("", "pyodide-large-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	err = rt.MountHostDir(tmpDir, "/mnt_large", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// 10MB of data
+	size := 10 * 1024 * 1024
+	script := fmt.Sprintf(`
+import os
+size = %d
+data = "A" * size
+file_path = "/mnt_large/large.txt"
+with open(file_path, "w") as f:
+    f.write(data)
+
+with open(file_path, "r") as f:
+    read_data = f.read()
+
+assert len(read_data) == size
+assert read_data == data
+"OK"
+`, size)
+
+	res, err := rt.Run(ctx, script)
+	if err != nil {
+		t.Fatalf("Large file op failed: %v", err)
+	}
+	if res != "OK" {
+		t.Errorf("Expected 'OK', got %q", res)
 	}
 }

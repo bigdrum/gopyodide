@@ -456,18 +456,24 @@
 					_go_fs_close(stream.nfd);
 				},
 				read: function (stream, buffer, offset, length, position) {
-					// console.log("GoFS read");
 					try {
-						var resStr = _go_fs_read(stream.nfd, null, 0, length, position);
-						var res = JSON.parse(resStr);
-						if (res.bytesRead > 0) {
-							// Decode base64 to buffer
-							var bin = atob(res.data);
-							for (var i = 0; i < bin.length; i++) {
-								buffer[offset + i] = bin.charCodeAt(i);
+						var transit = new Uint8Array(g.__fsTransitSAB);
+						var totalRead = 0;
+						var currentPos = position;
+
+						while (totalRead < length) {
+							var chunkLen = Math.min(length - totalRead, transit.length);
+							var n = _go_fs_read(stream.nfd, chunkLen, currentPos);
+							if (n <= 0) break;
+
+							buffer.set(transit.subarray(0, n), offset + totalRead);
+							totalRead += n;
+
+							if (currentPos !== null && currentPos !== undefined) {
+								currentPos += n;
 							}
 						}
-						return res.bytesRead;
+						return totalRead;
 					} catch (e) {
 						console.log("GoFS read fail: " + e);
 						throw new FS.ErrnoError(5);
@@ -477,10 +483,24 @@
 					var FS = getFS();
 					if (stream.node.mount.opts.readOnly) throw new FS.ErrnoError(30);
 					try {
-						var slice = buffer.subarray(offset, offset + length);
-						var binary = '';
-						for (var i = 0; i < slice.length; i++) binary += String.fromCharCode(slice[i]);
-						return _go_fs_write(stream.nfd, btoa(binary), length, position);
+						var transit = new Uint8Array(g.__fsTransitSAB);
+						var totalWritten = 0;
+						var currentPos = position;
+
+						while (totalWritten < length) {
+							var chunkLen = Math.min(length - totalWritten, transit.length);
+							var slice = buffer.subarray(offset + totalWritten, offset + totalWritten + chunkLen);
+							transit.set(slice);
+
+							var n = _go_fs_write(stream.nfd, chunkLen, currentPos);
+							if (n <= 0) break;
+
+							totalWritten += n;
+							if (currentPos !== null && currentPos !== undefined) {
+								currentPos += n;
+							}
+						}
+						return totalWritten;
 					} catch (e) {
 						console.log("GoFS write error: " + e);
 						throw new FS.ErrnoError(5);

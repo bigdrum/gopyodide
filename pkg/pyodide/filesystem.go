@@ -1,7 +1,6 @@
 package pyodide
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -114,59 +113,62 @@ func (rt *Runtime) polyfillFileSystem() {
 
 	createFn("_go_fs_read", func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		fd := int(info.Args()[0].Int32())
-		// buffer arg [1] is ignored here, we return data
-		// offset arg [2] is ignored for reading, we return data
-		length := int(info.Args()[3].Int32())
-		position := info.Args()[4] // Number or null
+		length := int(info.Args()[1].Int32())
+		position := info.Args()[2] // Number or null
 
 		f := rt.getFD(fd)
 		if f == nil {
 			return rt.throwError(fmt.Errorf("EBADF: bad file descriptor %d", fd))
 		}
 
-		buf := make([]byte, length)
+		if rt.fsTransitBuf == nil {
+			return rt.throwError(fmt.Errorf("FS transit buffer not initialized"))
+		}
+
+		if length > len(rt.fsTransitBuf) {
+			length = len(rt.fsTransitBuf)
+		}
+
+		target := rt.fsTransitBuf[:length]
 		var n int
 		var err error
 
 		if !position.IsUndefined() && !position.IsNull() {
-			pos := position.Integer() // int64
-			n, err = f.ReadAt(buf, pos)
+			pos := position.Integer()
+			n, err = f.ReadAt(target, pos)
 		} else {
-			n, err = f.Read(buf)
+			n, err = f.Read(target)
 		}
 
 		if err != nil && err != io.EOF {
 			return rt.throwError(err)
 		}
 
-		// Return { bytesRead: n, data: base64 }
-		encoded := base64.StdEncoding.EncodeToString(buf[:n])
-		resJSON := fmt.Sprintf(`{"bytesRead": %d, "data": %q}`, n, encoded)
-		val, _ := v8go.NewValue(iso, resJSON)
+		val, _ := v8go.NewValue(iso, int32(n))
 		return val
 	})
 
 	createFn("_go_fs_write", func(info *v8go.FunctionCallbackInfo) *v8go.Value {
 		fd := int(info.Args()[0].Int32())
-		encoded := info.Args()[1].String()
-		length := int(info.Args()[2].Int32())
-		position := info.Args()[3] // Number or null
+		length := int(info.Args()[1].Int32())
+		position := info.Args()[2] // Number or null
 
 		f := rt.getFD(fd)
 		if f == nil {
 			return rt.throwError(fmt.Errorf("EBADF: bad file descriptor %d", fd))
 		}
 
-		data, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil {
-			return rt.throwError(err)
+		if rt.fsTransitBuf == nil {
+			return rt.throwError(fmt.Errorf("FS transit buffer not initialized"))
 		}
 
-		if len(data) > length {
-			data = data[:length]
+		if length > len(rt.fsTransitBuf) {
+			length = len(rt.fsTransitBuf)
 		}
 
+		data := rt.fsTransitBuf[:length]
 		var n int
+		var err error
 		if !position.IsUndefined() && !position.IsNull() {
 			pos := position.Integer()
 			n, err = f.WriteAt(data, pos)
