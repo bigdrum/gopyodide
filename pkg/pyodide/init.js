@@ -205,6 +205,45 @@
 		};
 	};
 
+	// Simplified AbortController and AbortSignal polyfill
+	g.AbortSignal = class {
+		constructor() {
+			this.aborted = false;
+			this._listeners = [];
+			this.reason = undefined;
+			this.onabort = null;
+		}
+		throwIfAborted() {
+			if (this.aborted) {
+				throw this.reason || new Error("Aborted");
+			}
+		}
+		addEventListener(ev, fn) {
+			if (ev === 'abort') {
+				if (this.aborted) fn();
+				else this._listeners.push(fn);
+			}
+		}
+		removeEventListener(ev, fn) {
+			if (ev === 'abort') {
+				this._listeners = this._listeners.filter(l => l !== fn);
+			}
+		}
+	};
+
+	g.AbortController = class {
+		constructor() {
+			this.signal = new g.AbortSignal();
+		}
+		abort(reason) {
+			if (this.signal.aborted) return;
+			this.signal.aborted = true;
+			this.signal.reason = reason;
+			if (this.signal.onabort) this.signal.onabort();
+			this.signal._listeners.forEach(fn => fn());
+		}
+	};
+
 	// Simplified XMLHttpRequest polyfill using fetch
 	g.XMLHttpRequest = class {
 		constructor() {
