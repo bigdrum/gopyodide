@@ -16,12 +16,9 @@ mounted from the host, allowing the Go host to manage lifecycle and cleanup.
 
 To achieve this, the following features are planned:
 
-- [ ] **Host Filesystem Mounting**: Robust support for mounting host directories
+- [x] **Host Filesystem Mounting**: Robust support for mounting host directories
       into the V8 virtual filesystem so Python scripts can read/write persistent
       Parquet files.
 - [ ] **Network Polyfills**: Enhanced support for `fetch` and potentially socket
       emulation (proxied through Go) to allow database connections and cloud
       storage uploads from within the WASM environment.
-- [ ] **Efficient Data Hand-off**: Optimization of the shared memory path to
-      ensure large datasets (Parquet files) can be processed with minimal
-      overhead.

@@ -169,7 +169,7 @@
 	};
 
 	g.addEventListener = (ev, fn) => {
-		console.log("GLOBAL_ADD_EVENT_LISTENER: " + ev);
+		console.debug("GLOBAL_ADD_EVENT_LISTENER (unimplemented): " + ev);
 	};
 	g.removeEventListener = (ev, fn) => { };
 
@@ -322,7 +322,6 @@
 		g.document = createLogger("document", document);
 		g.URL.createObjectURL = (obj) => "blob:mock";
 		g.URL.revokeObjectURL = (url) => { };
-		console.log("Document polyfilled (deferred)");
 	};
 
 	// GoFS: Host Filesystem Bridge
@@ -335,7 +334,6 @@
 				return fsImpl.createNode(null, '/', 16895, mount); // 16895 = S_IFDIR | 0777
 			},
 			createNode: function (parent, name, mode, dev) {
-				// console.log("GoFS createNode: " + name);
 				var FS = getFS();
 				var node = FS.createNode(parent, name, mode, dev);
 				node.node_ops = fsImpl.node_ops;
@@ -347,7 +345,6 @@
 					try {
 						var FS = getFS();
 						var path = FS.getPath(node);
-						// console.log("GoFS getattr: " + path);
 
 						var json = _go_fs_stat(path);
 						var info = JSON.parse(json);
@@ -372,7 +369,6 @@
 							blocks: Math.ceil(info.size / 512)
 						};
 					} catch (e) {
-						// console.log("GoFS getattr error: " + e);
 						if (e.toString().includes("no such file") || e.toString().includes("ENOENT")) throw new FS.ErrnoError(2); // ENOENT
 						throw new FS.ErrnoError(5); // EIO
 					}
@@ -382,7 +378,6 @@
 					if (node.mount.opts.readOnly) throw new FS.ErrnoError(30); // EROFS
 				},
 				lookup: function (parent, name) {
-					// console.log("GoFS lookup: " + name);
 					try {
 						var FS = getFS();
 						var parentPath = FS.getPath(parent);
@@ -535,5 +530,4 @@
 		g.pyodide.FS.mount(g.pyodide.FS.filesystems.GOFS, { readOnly: readOnly }, mountPoint);
 		console.log("GoFS mounted at " + mountPoint + " (readOnly: " + readOnly + ")");
 	};
-	console.log("Environment polyfilled (Base + GoFS)");
 })();

@@ -354,12 +354,10 @@ func (rt *Runtime) LoadPackage(name string) error {
 				if (!globalThis.pyodide) {
 					throw new Error("Pyodide not initialized");
 				}
-				console.log("LoadPackage: running loadPackage script");
 				return globalThis.pyodide.loadPackage(%q).then(() => {
-					console.log("LoadPackage: done");
 					return "OK";
 				}).catch(e => {
-					console.log("LoadPackage: promise rejected internally: " + e + "\nSTACK: " + e.stack);
+					console.warn("LoadPackage: promise rejected internally: " + e + "\nSTACK: " + e.stack);
 					throw e;
 				});
 			})()
