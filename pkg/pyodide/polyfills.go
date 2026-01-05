@@ -103,13 +103,11 @@ func (rt *Runtime) polyfillFetch() {
 		args := info.Args()
 		resolver, _ := v8go.NewPromiseResolver(rt.context)
 		url := args[0].String()
-		rt.logger.Debug("JS_FETCH_URL", "url", url)
 		rt.spawnGo(func() {
-			rt.logger.Debug("JS_FETCH_START", "url", url)
 			data, err := rt.FetchAsset(url)
 			rt.queueTask("fetch_resolve", func() {
 				if err != nil {
-					rt.logger.Error("JS_FETCH_ERROR", "url", url, "error", err)
+					rt.logger.Info("JS_FETCH_ERROR", "url", url, "error", err)
 					val := rt.errorValue(err)
 					resolver.Reject(val)
 					return
