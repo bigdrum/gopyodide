@@ -29,6 +29,29 @@ func TestPyodideBasic(t *testing.T) {
 	})
 }
 
+func TestPyodideEnvironment(t *testing.T) {
+	t.Parallel()
+	rt, done := setup(t)
+	defer done()
+
+	js := `
+		(() => {
+			const isWorker = typeof globalThis.WorkerGlobalScope !== "undefined" &&
+				typeof globalThis.self !== "undefined" &&
+				globalThis.self instanceof globalThis.WorkerGlobalScope;
+			return isWorker;
+		})()
+	`
+	val, err := rt.Evaluate(context.Background(), js)
+	if err != nil {
+		t.Fatalf("Failed to run JS: %v", err)
+	}
+
+	if val.String() != "true" {
+		t.Errorf("Expected environment to be detected as Web Worker (true), got %s", val.String())
+	}
+}
+
 func TestPyodideNumpy(t *testing.T) {
 	t.Parallel()
 	rt, done := setup(t)
@@ -100,7 +123,7 @@ func TestPyodideDuckDB(t *testing.T) {
 	rt, done := setup(t)
 	defer done()
 
-	err := rt.LoadPackage(`https://duckdb.github.io/duckdb-pyodide/wheels/duckdb-1.2.0-cp311-cp311-emscripten_3_1_46_wasm32.whl`)
+	err := rt.LoadPackage(`https://duckdb.github.io/duckdb-pyodide/wheels/duckdb-1.2.0-cp312-cp312-pyodide_2024_0_wasm32.whl`)
 	if err != nil {
 		t.Fatal(err)
 	}

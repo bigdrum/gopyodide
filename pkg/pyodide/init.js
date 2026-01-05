@@ -58,6 +58,15 @@
 		onLine: true
 	});
 
+	// Pretending to be a Web Worker for newer Pyodide versions
+	g.WorkerGlobalScope = class WorkerGlobalScope { };
+	try {
+		Object.setPrototypeOf(g, g.WorkerGlobalScope.prototype);
+	} catch (e) {
+		// Fallback for environments where setPrototypeOf on globalThis is restricted
+		console.warn("Failed to set prototype of globalThis: " + e);
+	}
+
 	g.self = g;
 	g.window = g;
 	g.top = g;
