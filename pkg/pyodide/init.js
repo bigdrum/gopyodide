@@ -173,11 +173,7 @@
 	};
 	g.removeEventListener = (ev, fn) => { };
 
-	const hexTab = new Uint8Array(256);
-	for (let i = 0; i < 16; i++) {
-		hexTab["0123456789abcdef".charCodeAt(i)] = i;
-		hexTab["0123456789ABCDEF".charCodeAt(i)] = i;
-	}
+	g.__createSAB = (size) => new SharedArrayBuffer(size);
 
 	// Simplified Headers polyfill
 	g.Headers = class {
@@ -187,13 +183,13 @@
 	};
 
 	// Simplified Fetch Response creation
-	g.createFetchResponse = (hex) => {
-		const len = hex.length / 2;
-		const buffer = new Uint8Array(len);
-		for (let i = 0; i < len; i++) {
-			buffer[i] = (hexTab[hex.charCodeAt(i * 2)] << 4) | hexTab[hex.charCodeAt(i * 2 + 1)];
-		}
-		const ab = buffer.buffer;
+	g.createFetchResponse = (sab) => {
+		// WebAssembly and some other APIs don't accept SharedArrayBuffer directly.
+		// We copy it to a regular ArrayBuffer. Still MUCH faster than hex/base64.
+		const ab = new ArrayBuffer(sab.byteLength);
+		new Uint8Array(ab).set(new Uint8Array(sab));
+		const buffer = new Uint8Array(ab);
+
 		return {
 			ok: true, status: 200, statusText: "OK",
 			url: "http://localhost/asset",

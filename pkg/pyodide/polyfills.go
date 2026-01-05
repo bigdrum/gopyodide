@@ -3,7 +3,6 @@ package pyodide
 import (
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
@@ -117,15 +116,35 @@ func (rt *Runtime) polyfillFetch() {
 				}
 
 				rt.logger.Debug("JS_FETCH_DONE", "url", url, "bytes", len(data))
-				hexData := hex.EncodeToString(data)
-				arg, err := v8go.NewValue(iso, hexData)
+
+				global := rt.context.Global()
+				createSABVal, err := global.Get("__createSAB")
 				if err != nil {
-					val := rt.errorValue(err)
-					resolver.Reject(val)
+					resolver.Reject(rt.errorValue(err))
+					return
+				}
+				createSAB, err := createSABVal.AsFunction()
+				if err != nil {
+					resolver.Reject(rt.errorValue(err))
 					return
 				}
 
-				fn, err := rt.context.Global().Get("createFetchResponse")
+				sizeVal, _ := v8go.NewValue(iso, int32(len(data)))
+				sabVal, err := createSAB.Call(v8go.Undefined(iso), sizeVal)
+				if err != nil {
+					resolver.Reject(rt.errorValue(err))
+					return
+				}
+
+				buf, free, err := sabVal.SharedArrayBufferGetContents()
+				if err != nil {
+					resolver.Reject(rt.errorValue(err))
+					return
+				}
+				defer free()
+				copy(buf, data)
+
+				fn, err := global.Get("createFetchResponse")
 				if err != nil {
 					val := rt.errorValue(err)
 					resolver.Reject(val)
@@ -139,7 +158,7 @@ func (rt *Runtime) polyfillFetch() {
 					return
 				}
 
-				resp, err := f.Call(v8go.Undefined(iso), arg)
+				resp, err := f.Call(v8go.Undefined(iso), sabVal)
 				if err != nil {
 					val := rt.errorValue(err)
 					resolver.Reject(val)
