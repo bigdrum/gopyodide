@@ -148,7 +148,6 @@
 						if (ev === 'message') this._listeners = this._listeners.filter(l => l !== fn);
 					},
 					postMessage: (msg) => {
-						console.log("PORT_POSTMESSAGE");
 						__queueTask(() => {
 							const other = port._other;
 							if (other) {

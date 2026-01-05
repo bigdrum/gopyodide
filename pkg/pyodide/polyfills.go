@@ -12,6 +12,8 @@ import (
 )
 
 func (rt *Runtime) polyfill() {
+	// We implement enough polyfills to run pyodide.
+	// Some are implemented in init.js.
 	rt.polyfillConsole()
 	rt.polyfillImportScripts()
 	rt.polyfillFetch()
