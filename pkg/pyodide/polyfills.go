@@ -27,26 +27,28 @@ func (rt *Runtime) polyfillConsole() {
 	iso := rt.isolate
 	global := rt.context.Global()
 
-	logFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
-		if rt.logger.Enabled(context.Background(), slog.LevelInfo) {
-			args := info.Args()
-			s := ""
-			for i, a := range args {
-				if i > 0 {
-					s += " "
+	logFn := func(level string) *v8go.FunctionTemplate {
+		return v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+			if rt.logger.Enabled(context.Background(), slog.LevelInfo) {
+				args := info.Args()
+				s := ""
+				for i, a := range args {
+					if i > 0 {
+						s += " "
+					}
+					s += a.String()
 				}
-				s += a.String()
+				rt.logger.Info("JS_"+level, "message", s)
 			}
-			rt.logger.Info("JS_LOG", "message", s)
-		}
-		return nil
-	})
+			return nil
+		})
+	}
 	consoleObjTempl := v8go.NewObjectTemplate(iso)
-	consoleObjTempl.Set("log", logFn)
-	consoleObjTempl.Set("error", logFn)
-	consoleObjTempl.Set("warn", logFn)
-	consoleObjTempl.Set("info", logFn)
-	consoleObjTempl.Set("debug", logFn)
+	consoleObjTempl.Set("log", logFn("LOG"))
+	consoleObjTempl.Set("error", logFn("ERROR"))
+	consoleObjTempl.Set("warn", logFn("WARN"))
+	consoleObjTempl.Set("info", logFn("INFO"))
+	consoleObjTempl.Set("debug", logFn("DEBUG"))
 	consoleObj, _ := consoleObjTempl.NewInstance(rt.context)
 	global.Set("console", consoleObj)
 }

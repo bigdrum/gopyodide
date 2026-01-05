@@ -134,9 +134,10 @@ func setup(t *testing.T) (*Runtime, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// make rt.logger logs Debug level
 	rt.logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		// To enable debug logging, uncomment the following line:
+		// Level: slog.LevelDebug,
+		Level: slog.LevelInfo,
 	}))
 	rt.SetCacheDir(testTmpDir)
 	err = rt.Start()
