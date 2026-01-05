@@ -190,15 +190,27 @@
 		new Uint8Array(ab).set(new Uint8Array(sab));
 		const buffer = new Uint8Array(ab);
 
-		return {
+		const resp = {
 			ok: true, status: 200, statusText: "OK",
 			url: "http://localhost/asset",
 			headers: new g.Headers({ 'content-type': 'application/octet-stream' }),
-			arrayBuffer: () => { return Promise.resolve(ab); },
-			json: () => Promise.resolve(JSON.parse(new g.TextDecoder().decode(buffer))),
-			text: () => Promise.resolve(new g.TextDecoder().decode(buffer)),
-			clone() { return this; }
+			bodyUsed: false,
+			_rawBuffer: ab,
+			arrayBuffer: () => {
+				resp.bodyUsed = true;
+				return Promise.resolve(ab);
+			},
+			json: () => {
+				resp.bodyUsed = true;
+				return Promise.resolve(JSON.parse(new g.TextDecoder().decode(buffer)));
+			},
+			text: () => {
+				resp.bodyUsed = true;
+				return Promise.resolve(new g.TextDecoder().decode(buffer));
+			},
+			clone() { return { ...resp }; }
 		};
+		return resp;
 	};
 
 	// Simplified AbortController and AbortSignal polyfill
@@ -246,21 +258,48 @@
 			this.readyState = 0;
 			this.status = 0;
 			this.response = null;
+			this.responseText = "";
+			this.responseType = "";
 			this.onload = null;
 			this.onerror = null;
+			this.async = true;
 		}
-		open(method, url) { this.url = url; this.readyState = 1; }
+		open(method, url, async = true) {
+			this.url = url;
+			this.async = async;
+			this.readyState = 1;
+		}
 		send() {
-			fetch(this.url).then(r => {
+			const handleResponse = (r) => {
 				this.status = r.status;
-				return r.arrayBuffer();
-			}).then(ab => {
-				this.response = ab;
+				const ab = r._rawBuffer || r; // fallback if it's already an arraybuffer
+				this.responseText = new g.TextDecoder().decode(ab);
+				if (this.responseType === 'arraybuffer') {
+					this.response = ab;
+				} else {
+					this.response = this.responseText;
+				}
 				this.readyState = 4;
 				if (this.onload) this.onload();
-			}).catch(e => {
-				if (this.onerror) this.onerror(e);
-			});
+			};
+
+			if (this.async) {
+				fetch(this.url).then(r => {
+					this.status = r.status;
+					return r.arrayBuffer();
+				}).then(ab => {
+					handleResponse(ab);
+				}).catch(e => {
+					if (this.onerror) this.onerror(e);
+				});
+			} else {
+				try {
+					const r = __fetchSync(this.url);
+					handleResponse(r);
+				} catch (e) {
+					if (this.onerror) this.onerror(e);
+				}
+			}
 		}
 		setRequestHeader() { }
 		getResponseHeader() { return null; }

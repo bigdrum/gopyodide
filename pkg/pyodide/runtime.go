@@ -483,7 +483,7 @@ func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 				if (!globalThis.pyodide) {
 					throw new Error("Pyodide not initialized");
 				}
-				return await globalThis.pyodide.runPython(%q);
+				return await globalThis.pyodide.runPythonAsync(%q);
 			})()
 		`, code)
 

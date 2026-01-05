@@ -16,6 +16,7 @@ func (rt *Runtime) polyfill() {
 	rt.polyfillConsole()
 	rt.polyfillImportScripts()
 	rt.polyfillFetch()
+	rt.polyfillFetchSync()
 	rt.polyfillSetTimeout()
 	rt.polyfillSetInterval()
 	rt.polyfillClearTimeout()
@@ -90,6 +91,67 @@ func (rt *Runtime) errorValue(err error) *v8go.Value {
 		panic(err)
 	}
 	return val
+}
+
+func (rt *Runtime) polyfillFetchSync() {
+	iso := rt.isolate
+	global := rt.context.Global()
+
+	fetchSyncFn := v8go.NewFunctionTemplate(iso, func(info *v8go.FunctionCallbackInfo) *v8go.Value {
+		if val := rt.checkArgs(info, 1); val != nil {
+			return val
+		}
+		url := info.Args()[0].String()
+		rt.logger.Debug("JS_FETCH_SYNC_START", "url", url)
+
+		data, err := rt.FetchAsset(url)
+		if err != nil {
+			rt.logger.Info("JS_FETCH_SYNC_ERROR", "url", url, "error", err)
+			val := rt.errorValue(err)
+			return iso.ThrowException(val)
+		}
+
+		rt.logger.Debug("JS_FETCH_SYNC_DONE", "url", url, "bytes", len(data))
+
+		createSABVal, err := global.Get("__createSAB")
+		if err != nil {
+			return iso.ThrowException(rt.errorValue(err))
+		}
+		createSAB, err := createSABVal.AsFunction()
+		if err != nil {
+			return iso.ThrowException(rt.errorValue(err))
+		}
+
+		sizeVal, _ := v8go.NewValue(iso, int32(len(data)))
+		sabVal, err := createSAB.Call(v8go.Undefined(iso), sizeVal)
+		if err != nil {
+			return iso.ThrowException(rt.errorValue(err))
+		}
+
+		buf, free, err := sabVal.SharedArrayBufferGetContents()
+		if err != nil {
+			return iso.ThrowException(rt.errorValue(err))
+		}
+		defer free()
+		copy(buf, data)
+
+		fn, err := global.Get("createFetchResponse")
+		if err != nil {
+			return iso.ThrowException(rt.errorValue(err))
+		}
+
+		f, err := fn.AsFunction()
+		if err != nil {
+			return iso.ThrowException(rt.errorValue(err))
+		}
+
+		resp, err := f.Call(v8go.Undefined(iso), sabVal)
+		if err != nil {
+			return iso.ThrowException(rt.errorValue(err))
+		}
+		return resp
+	})
+	global.Set("__fetchSync", fetchSyncFn.GetFunction(rt.context))
 }
 
 func (rt *Runtime) polyfillFetch() {
