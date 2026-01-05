@@ -1,6 +1,7 @@
 package pyodide
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -27,22 +28,24 @@ type task struct {
 }
 
 type Runtime struct {
-	isolate     *v8go.Isolate
-	context     *v8go.Context
-	assets      map[string][]byte
-	tasks       chan task
-	done        chan struct{}
-	mu          sync.Mutex
-	timersMu    sync.Mutex
-	timers      map[int32]interface{}
-	nextTimerID int32
-	cacheDir    string
-	logger      *slog.Logger
-	waiter      *v8go.Function
-	loopWg      sync.WaitGroup
-	wg          sync.WaitGroup
-	activeTask  string
-	closed      bool
+	isolate       *v8go.Isolate
+	context       *v8go.Context
+	assets        map[string][]byte
+	tasks         chan task
+	done          chan struct{}
+	mu            sync.Mutex
+	timersMu      sync.Mutex
+	timers        map[int32]interface{}
+	nextTimerID   int32
+	cacheDir      string
+	logger        *slog.Logger
+	waiter        *v8go.Function
+	loopWg        sync.WaitGroup
+	wg            sync.WaitGroup
+	activeTask    string
+	closed        bool
+	interruptBuf  []byte
+	interruptFree func()
 }
 
 func New() (*Runtime, error) {
@@ -277,7 +280,10 @@ func (rt *Runtime) LoadPyodide(indexURL string) error {
 				.then(p => { 
 					console.log("loadPyodide promise resolved internally");
 					globalThis.pyodide = p; 
-					return "OK"; 
+					const sab = new SharedArrayBuffer(16);
+					const int32View = new Int32Array(sab);
+					p.setInterruptBuffer(int32View);
+					return sab; 
 				})
 				.catch(e => {
 					console.log("loadPyodide promise rejected internally: " + e + "\nSTACK: " + e.stack);
@@ -293,10 +299,19 @@ func (rt *Runtime) LoadPyodide(indexURL string) error {
 		}
 
 		rt.await(val, func(v *v8go.Value) {
+			if v.IsSharedArrayBuffer() {
+				buf, free, _ := v.SharedArrayBufferGetContents()
+				rt.interruptBuf = buf
+				rt.interruptFree = free
+				rt.logger.Info("LoadPyodide: interrupt buffer initialized", "len", len(buf))
+			} else {
+				rt.logger.Warn("LoadPyodide: returned value is not SharedArrayBuffer")
+			}
 			errCh <- nil
 		}, func(err error) {
 			errCh <- err
 		})
+
 	})
 
 	return <-errCh
@@ -345,8 +360,28 @@ func (rt *Runtime) LoadPackage(name string) error {
 	}
 }
 
-func (rt *Runtime) Run(code string) (string, error) {
+func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 	rt.logger.Info("Run: starting", "code_len", len(code))
+
+	if rt.interruptBuf != nil && len(rt.interruptBuf) > 0 {
+		rt.interruptBuf[0] = 0
+	}
+
+	ctxDone := make(chan struct{})
+	defer close(ctxDone)
+	if rt.interruptBuf != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+				// Trigger execution interrupt
+				if len(rt.interruptBuf) > 0 {
+					rt.interruptBuf[0] = 2
+					rt.logger.Info("Run: context cancelled, sent interrupt")
+				}
+			case <-ctxDone:
+			}
+		}()
+	}
 
 	type result struct {
 		res string
@@ -379,9 +414,20 @@ func (rt *Runtime) Run(code string) (string, error) {
 		})
 	})
 
-	res := <-resCh
-	rt.logger.Info("Run done.")
-	return res.res, res.err
+	select {
+	case res := <-resCh:
+		rt.logger.Info("Run done.")
+		return res.res, res.err
+	case <-ctx.Done():
+		// If context is cancelled, we still wait for the result from resCh because we triggered interrupt.
+		// Pyodide should throw KeyboardInterrupt and return.
+		// However, we shouldn't block forever if something goes wrong.
+		// But user requirement says: "wait for runPython to return".
+		rt.logger.Info("Run: waiting for runPython to return after interrupt")
+		res := <-resCh
+		rt.logger.Info("Run: runPython returned after interrupt")
+		return res.res, res.err
+	}
 }
 
 func (rt *Runtime) spawnGo(fn func()) {
@@ -413,6 +459,12 @@ func (rt *Runtime) Close() {
 		delete(rt.timers, id)
 	}
 	rt.timersMu.Unlock()
+
+	if rt.interruptFree != nil {
+		rt.interruptFree()
+		rt.interruptFree = nil
+		rt.interruptBuf = nil
+	}
 
 	rt.wg.Wait()
 	rt.loopWg.Wait()
