@@ -150,6 +150,7 @@
 				const port = {
 					onmessage: null,
 					_listeners: [],
+					_closed: false,
 					addEventListener(ev, fn) {
 						if (ev === 'message') this._listeners.push(fn);
 					},
@@ -157,16 +158,25 @@
 						if (ev === 'message') this._listeners = this._listeners.filter(l => l !== fn);
 					},
 					postMessage: (msg) => {
+						if (port._closed) return;
+						const other = port._other;
+						if (!other || other._closed) return;
+
 						__queueTask(() => {
-							const other = port._other;
-							if (other) {
-								const ev = { data: msg, target: other };
-								if (other.onmessage) other.onmessage(ev);
-								other._listeners.forEach(l => l(ev));
-							}
+							if (other._closed || port._closed) return;
+							const ev = { data: msg, target: other };
+							if (other.onmessage) other.onmessage(ev);
+							other._listeners.forEach(l => l(ev));
 						});
 					},
-					start() { }
+					start() { },
+					close() {
+						this._closed = true;
+						if (this._other) {
+							this._other._other = null;
+							this._other = null;
+						}
+					}
 				};
 				return port;
 			};
