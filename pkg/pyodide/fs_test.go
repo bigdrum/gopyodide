@@ -27,7 +27,7 @@ except Exception as e:
     fss.append(str(e))
 ",".join(fss)
 `
-	out, err := rt.Run(ctx, script)
+	out, err := rt.RunPython(ctx, script)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ with open(file_path, "r") as f:
 data
 `
 
-	res, err := rt.Run(ctx, script)
+	res, err := rt.RunPython(ctx, script)
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestPyodideMountReadOnly(t *testing.T) {
 	defer cancel()
 
 	// Verify reading works
-	res, err := rt.Run(ctx, `
+	res, err := rt.RunPython(ctx, `
 with open("/mnt_ro/test.txt", "r") as f:
     data = f.read()
 data
@@ -112,7 +112,7 @@ data
 	}
 
 	// Verify writing fails
-	res, err = rt.Run(ctx, `
+	res, err = rt.RunPython(ctx, `
 try:
     with open("/mnt_ro/fail.txt", "w") as f:
         f.write("should fail")
@@ -158,7 +158,7 @@ with open(file_path, "w") as f:
     f.write("` + content + `")
 "OK"
 `
-	_, err = rt.Run(ctx, script)
+	_, err = rt.RunPython(ctx, script)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ assert read_data == data
 "OK"
 `, size)
 
-	res, err := rt.Run(ctx, script)
+	res, err := rt.RunPython(ctx, script)
 	if err != nil {
 		t.Fatalf("Large file op failed: %v", err)
 	}

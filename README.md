@@ -87,7 +87,7 @@ func main() {
 	}
 
 	// Run Python code
-	res, err := rt.Run(context.Background(), "1 + 1")
+	res, err := rt.RunPython(context.Background(), "1 + 1")
 	if err != nil {
 		log.Fatalf("Python execution failed: %v", err)
 	}
@@ -112,7 +112,7 @@ import numpy as np
 arr = np.array([1, 2, 3])
 str(arr.sum())
 `
-	res, err := rt.Run(context.Background(), code)
+	res, err := rt.RunPython(context.Background(), code)
 	if err != nil {
 		log.Fatalf("Execution failed: %v", err)
 	}
@@ -121,7 +121,7 @@ str(arr.sum())
 
 ### Context Cancellation
 
-The `Run` function respects `context.Context`. Cancelling the context will
+The `RunPython` function respects `context.Context`. Cancelling the context will
 trigger a Python `KeyboardInterrupt` in the running script.
 
 ```go
@@ -131,7 +131,7 @@ trigger a Python `KeyboardInterrupt` in the running script.
 
 	// Run a long-running Python loop (e.g., an infinite loop)
 	// This will be interrupted when the context times out.
-	_, err = rt.Run(ctx, "while True: pass")
+	_, err = rt.RunPython(ctx, "while True: pass")
 	if err != nil {
 		fmt.Printf("Execution interrupted: %v\n", err)
 	}

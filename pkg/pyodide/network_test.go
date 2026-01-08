@@ -18,7 +18,7 @@ resp = await pyodide.http.pyfetch("https://httpbin.org/get")
 data = await resp.json()
 data["url"] == "https://httpbin.org/get"
 `
-		res, err := rt.Run(context.Background(), code)
+		res, err := rt.RunPython(context.Background(), code)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -38,7 +38,7 @@ def test_open_url():
     return data["url"] == "https://httpbin.org/get"
 test_open_url()
 `
-		res, err := rt.Run(context.Background(), code)
+		res, err := rt.RunPython(context.Background(), code)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}

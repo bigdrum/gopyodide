@@ -37,7 +37,7 @@ except KeyboardInterrupt:
     res = "INTERRUPTED"
 res
 `
-	res, err := rt.Run(ctx, code)
+	res, err := rt.RunPython(ctx, code)
 	duration := time.Since(start)
 
 	if err != nil {

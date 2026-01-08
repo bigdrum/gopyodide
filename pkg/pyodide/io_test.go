@@ -16,7 +16,7 @@ with open("test_file.txt", "w") as f:
     f.write("Hello from Python File IO")
 "File written"
 `
-	res, err := rt.Run(context.Background(), writeCode)
+	res, err := rt.RunPython(context.Background(), writeCode)
 	if err != nil {
 		t.Fatalf("Failed to write file: %v", err)
 	}
@@ -30,7 +30,7 @@ with open("test_file.txt", "r") as f:
     content = f.read()
 content
 `
-	res, err = rt.Run(context.Background(), readCode)
+	res, err = rt.RunPython(context.Background(), readCode)
 	if err != nil {
 		t.Fatalf("Failed to read file: %v", err)
 	}
@@ -43,7 +43,7 @@ content
 import os
 os.path.exists("test_file.txt")
 `
-	res, err = rt.Run(context.Background(), checkCode)
+	res, err = rt.RunPython(context.Background(), checkCode)
 	if err != nil {
 		t.Fatalf("Failed to check file existence: %v", err)
 	}
@@ -63,7 +63,7 @@ with open("data/subdir/file.txt", "w") as f:
     f.write("nested")
 os.listdir("data/subdir")
 `
-	res, err := rt.Run(context.Background(), code)
+	res, err := rt.RunPython(context.Background(), code)
 	if err != nil {
 		t.Fatalf("Failed to manipulate directories: %v", err)
 	}

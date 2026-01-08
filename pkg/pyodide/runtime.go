@@ -433,14 +433,14 @@ func (rt *Runtime) MountHostDir(hostPath, mountPath string, readOnly bool) error
 	return <-errCh
 }
 
-func (rt *Runtime) Evaluate(ctx context.Context, script string) (*v8go.Value, error) {
+func (rt *Runtime) RunJS(ctx context.Context, script string) (*v8go.Value, error) {
 	type result struct {
 		val *v8go.Value
 		err error
 	}
 	resCh := make(chan result, 1)
 
-	rt.queueTask("Evaluate", func() {
+	rt.queueTask("RunJS", func() {
 		val, err := rt.context.RunScript(script, "evaluate.js")
 		if err != nil {
 			resCh <- result{err: err}
@@ -462,8 +462,8 @@ func (rt *Runtime) Evaluate(ctx context.Context, script string) (*v8go.Value, er
 	}
 }
 
-func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
-	rt.logger.Info("Run: starting", "code_len", len(code))
+func (rt *Runtime) RunPython(ctx context.Context, code string) (string, error) {
+	rt.logger.Info("RunPython: starting", "code_len", len(code))
 
 	type result struct {
 		res string
@@ -471,8 +471,8 @@ func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 	}
 	resCh := make(chan result, 1)
 
-	rt.queueTask("Run", func() {
-		rt.logger.Debug("Run task: running script")
+	rt.queueTask("RunPython", func() {
+		rt.logger.Debug("RunPython task: running script")
 		if len(rt.interruptBuf) > 0 {
 			rt.mu.Lock()
 			rt.interruptBuf[0] = 0
@@ -489,7 +489,7 @@ func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 
 		val, err := rt.context.RunScript(script, "run.js")
 		if err != nil {
-			rt.logger.Error("Run task: script run failed", "error", err)
+			rt.logger.Error("RunPython task: script run failed", "error", err)
 			resCh <- result{err: err}
 			return
 		}
@@ -503,7 +503,7 @@ func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 
 	select {
 	case res := <-resCh:
-		rt.logger.Info("Run done.")
+		rt.logger.Info("RunPython done.")
 		return res.res, res.err
 	case <-ctx.Done():
 		// Trigger execution interrupt
@@ -511,18 +511,18 @@ func (rt *Runtime) Run(ctx context.Context, code string) (string, error) {
 			rt.mu.Lock()
 			rt.interruptBuf[0] = 2
 			rt.mu.Unlock()
-			rt.logger.Info("Run: context cancelled, sent interrupt")
+			rt.logger.Info("RunPython: context cancelled, sent interrupt")
 		} else {
-			rt.logger.Warn("Run: context cancelled, but interrupt buffer is not initialized")
+			rt.logger.Warn("RunPython: context cancelled, but interrupt buffer is not initialized")
 		}
 
 		// If context is cancelled, we still wait for the result from resCh because we triggered interrupt.
 		// Pyodide should throw KeyboardInterrupt and return.
 		// However, we shouldn't block forever if something goes wrong.
 		// But user requirement says: "wait for runPython to return".
-		rt.logger.Info("Run: waiting for runPython to return after interrupt")
+		rt.logger.Info("RunPython: waiting for runPython to return after interrupt")
 		res := <-resCh
-		rt.logger.Info("Run: runPython returned after interrupt")
+		rt.logger.Info("RunPython: runPython returned after interrupt")
 		return res.res, res.err
 	}
 }

@@ -11,7 +11,7 @@ func TestPyodideBasic(t *testing.T) {
 	defer done()
 
 	t.Run("Python Math", func(t *testing.T) {
-		res, err := rt.Run(context.Background(), "1 + 1")
+		res, err := rt.RunPython(context.Background(), "1 + 1")
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -21,7 +21,7 @@ func TestPyodideBasic(t *testing.T) {
 	})
 
 	t.Run("Python System", func(t *testing.T) {
-		res, err := rt.Run(context.Background(), "import sys; sys.version")
+		res, err := rt.RunPython(context.Background(), "import sys; sys.version")
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -42,7 +42,7 @@ func TestPyodideEnvironment(t *testing.T) {
 			return isWorker;
 		})()
 	`
-	val, err := rt.Evaluate(context.Background(), js)
+	val, err := rt.RunJS(context.Background(), js)
 	if err != nil {
 		t.Fatalf("Failed to run JS: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestPyodideNumpy(t *testing.T) {
 	}
 
 	t.Run("Numpy Sum", func(t *testing.T) {
-		res, err := rt.Run(context.Background(), "import numpy as np; str(np.array([1, 2, 3]).sum())")
+		res, err := rt.RunPython(context.Background(), "import numpy as np; str(np.array([1, 2, 3]).sum())")
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -84,7 +84,7 @@ func TestPyodideSix(t *testing.T) {
 	}
 
 	t.Run("Six Import", func(t *testing.T) {
-		res, err := rt.Run(context.Background(), "import six; six.__version__")
+		res, err := rt.RunPython(context.Background(), "import six; six.__version__")
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -103,7 +103,7 @@ func TestPyodidePandas(t *testing.T) {
 	}
 
 	t.Run("Pandas DataFrame", func(t *testing.T) {
-		res, err := rt.Run(context.Background(), `
+		res, err := rt.RunPython(context.Background(), `
 import pandas as pd
 import numpy as np
 df = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
@@ -129,7 +129,7 @@ func TestPyodideDuckDB(t *testing.T) {
 	}
 
 	t.Run("DuckDB Query", func(t *testing.T) {
-		res, err := rt.Run(context.Background(), `
+		res, err := rt.RunPython(context.Background(), `
 import duckdb
 con = duckdb.connect()
 res = con.execute("SELECT 42").fetchone()
